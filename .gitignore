@@ -1,0 +1,11 @@
+# licensed dataset, never committed
+data/redsm5_posts.csv
+data/redsm5_annotations.csv
+
+.venv/
+__pycache__/
+.DS_Store
+
+# private notes
+docs/private/
+CLAUDE.local.md
