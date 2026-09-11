@@ -18,6 +18,6 @@ Things I learned from the authors' code rather than the paper:
 ## Setup
 
 ```bash
-python3.12 -m venv .venv && source .venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
