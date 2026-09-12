@@ -5,6 +5,8 @@ data/redsm5_annotations.csv
 venv/
 __pycache__/
 .DS_Store
+outputs/
+docs/reading_sample.md
 
 # private notes
 docs/private/
