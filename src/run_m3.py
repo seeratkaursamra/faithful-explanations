@@ -1,0 +1,114 @@
+"""M3 on the test split: the joint answer, then erasure with the same prompt, written as harness records."""
+import argparse
+import json
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import yaml
+
+from .data import NO_SYMPTOMS, check_against_paper, load, split
+from .llm import ask
+from .sentences import split as split_sentences
+from .sentences import texts
+
+
+def numbered(sentences):
+    return "\n".join(f"{i}: {s}" for i, s in enumerate(sentences))
+
+
+def answer(sentences, prompts, ask_fn):
+    """The joint prompt on these sentences. Returns ask's result dict."""
+    return ask_fn(prompts["joint"].format(numbered_post=numbered(sentences)), prompts["system"],
+                  n_sentences=len(sentences))
+
+
+def confidence(result, label):
+    """The model's output for one label on 0-1: its confidence if it names the label, 0 if it does not.
+    None when the reply failed to parse or named the label without a confidence."""
+    if not result["ok"]:
+        return None
+    for s in result["symptoms"]:
+        if s["label"] == label:
+            return None if s["confidence"] is None else s["confidence"] / 100
+    return 0.0
+
+
+def erasure(sentences, evidence, label, p_full, prompts, ask_fn):
+    """(comprehensiveness, sufficiency) for one label, both through the joint prompt.
+
+    Undefined (None) when the model cited nothing, since removing nothing tests nothing, and
+    comprehensiveness is undefined when the evidence is the whole post, since nothing would be left.
+    """
+    if p_full is None or not evidence:
+        return None, None
+    without = [s for i, s in enumerate(sentences) if i not in evidence]
+    only = [s for i, s in enumerate(sentences) if i in evidence]
+    p_without = confidence(answer(without, prompts, ask_fn), label) if without else None
+    p_only = confidence(answer(only, prompts, ask_fn), label)
+    return (None if p_without is None else p_full - p_without,
+            None if p_only is None else p_full - p_only)
+
+
+def post_records(post_id, text, gold_labels, prompts, ask_fn):
+    """Harness records for one post: every symptom predicted or gold. Also returns the joint result,
+    so the caller can count parse failures and retries."""
+    sentences = texts(text, split_sentences(text))
+    result = answer(sentences, prompts, ask_fn)
+    if not result["ok"]:
+        return [], result
+    said = {s["label"]: s for s in result["symptoms"] if s["label"] != NO_SYMPTOMS}
+    records = []
+    for label in sorted(set(said) | (set(gold_labels) - {NO_SYMPTOMS})):
+        s = said.get(label)
+        record = {"model": "M3", "post_id": post_id, "symptom": label, "predicted": s is not None,
+                  "gold": label in gold_labels, "stated_evidence": None, "stated_rationale": None,
+                  "attribution": {}, "comprehensiveness": None, "sufficiency": None}
+        if s is not None:
+            p_full = None if s["confidence"] is None else s["confidence"] / 100
+            record["comprehensiveness"], record["sufficiency"] = erasure(
+                sentences, set(s["evidence"]), label, p_full, prompts, ask_fn)
+            record.update(stated_evidence=s["evidence"], stated_rationale=s["rationale"] or None,
+                          confidence=p_full)
+        records.append(record)
+    return records, result
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default="data")
+    ap.add_argument("--prompts", default="configs/prompts.yaml")
+    ap.add_argument("--out", default="outputs/records")
+    ap.add_argument("--workers", type=int, default=1, help="parallel requests; set OLLAMA_NUM_PARALLEL to match")
+    ap.add_argument("--limit", type=int, default=None, help="first N test posts only, for a trial run")
+    ap.add_argument("--allow-mismatch", action="store_true", help="for the public sample")
+    args = ap.parse_args()
+
+    posts, _ = load(args.data)
+    if not args.allow_mismatch and not check_against_paper(posts)["matches_paper"]:
+        raise SystemExit("data does not match the paper, refusing to run")
+    _, test = split(posts)
+    test = test.head(args.limit) if args.limit else test
+    prompts = yaml.safe_load(Path(args.prompts).read_text())
+
+    def one(row):
+        return post_records(row.post_id, row.text, row.labels, prompts, ask)
+
+    with ThreadPoolExecutor(args.workers) as pool:
+        results = list(pool.map(one, test.itertuples()))
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    with open(out / "m3.jsonl", "w") as f:
+        for records, _ in results:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+    failed = [pid for pid, (_, r) in zip(test.post_id, results) if not r["ok"]]
+    log = {"posts": len(test), "parse_failures": len(failed), "failure_rate": len(failed) / len(test),
+           "failed_posts": failed, "retried": sum(r["attempts"] > 1 for _, r in results)}
+    (out / "m3_log.json").write_text(json.dumps(log, indent=2))
+    print(f"{sum(len(r) for r, _ in results)} records from {len(test)} posts; "
+          f"parse failures {len(failed)} ({log['failure_rate']:.1%}, prereg limit 10%)")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,4 +1,4 @@
-.PHONY: test inspect inspect-sample baseline baseline5 m1 figures clean
+.PHONY: test inspect inspect-sample baseline baseline5 m1 m3 evaluate figures clean
 
 test:
 	python -m pytest -q tests
@@ -25,3 +25,10 @@ baseline5:
 # needs data/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt, downloaded by hand
 m1:
 	python -m src.m1
+
+# needs `ollama serve`; resumable, every call is cached
+m3:
+	python -m src.run_m3
+
+evaluate:
+	python -m src.evaluate outputs/records/*.jsonl
