@@ -34,12 +34,19 @@ PAPER_N_POSTS = 1484
 PAPER_N_NEGATIVES = 392
 
 
-def load(data_dir="data"):
-    """Return (posts, annotations); posts gets a labels column with the notebook's 10-class scheme."""
+def load(data_dir="data", sample=False):
+    """Return (posts, annotations); posts gets a labels column with the notebook's 10-class scheme.
+
+    sample=True reads only the public sample, even when the real files are present. Tests use it.
+    """
     data_dir = Path(data_dir)
-    posts = pd.read_csv(_find(data_dir, "redsm5_posts.csv", "redsm5_posts_sample_paraphrased.csv"),
-                        dtype={"post_id": str, "text": str})
-    ann = pd.read_csv(_find(data_dir, "redsm5_annotations.csv", "redsm5_annotations_sample_paraphrased.csv"),
+    posts_names = ["redsm5_posts_sample_paraphrased.csv"]
+    ann_names = ["redsm5_annotations_sample_paraphrased.csv"]
+    if not sample:
+        posts_names.insert(0, "redsm5_posts.csv")
+        ann_names.insert(0, "redsm5_annotations.csv")
+    posts = pd.read_csv(_find(data_dir, *posts_names), dtype={"post_id": str, "text": str})
+    ann = pd.read_csv(_find(data_dir, *ann_names),
                       dtype={"post_id": str, "sentence_id": str, "DSM5_symptom": str})
     ann["status"] = ann["status"].astype(int)
     ann["sentence_index"] = ann["sentence_id"].str.rsplit("_", n=1).str[-1].astype(int)
