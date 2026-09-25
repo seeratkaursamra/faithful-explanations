@@ -26,7 +26,8 @@ logged, not a quiet change.
 
 Built so far: data layer, sentence segmentation + gold alignment, metrics, BERT baseline, LIME over
 sentences, Integrated Gradients, lexicon markers, Ollama client with embeddings, pipeline figure.
-M1 linear model. Not yet written: the per-(post, symptom) harness that ties models to metrics. The full dataset has not arrived, so
+M1 linear model, the evaluation harness. Not yet written: the runners that produce the harness's
+input records (M3 joint + erasure, IG over M2, M1 sentence scores); per-symptom DiD for H3; marker density. The full dataset has not arrived, so
 nothing has been run on real data yet.
 
 ## Code map
@@ -50,6 +51,9 @@ nothing has been run on real data yet.
   absolutist words, present-tense share of finite verbs. Features for M1 and the marker-density check.
 - `src/m1.py` - one logistic regression per label on TF-IDF 1-2 grams ("I" kept) + the four markers.
   `explain` gives each sentence its exact share of the logit; markers, boundary bigrams and bias apart.
+- `src/evaluate.py` - the harness. Input is one JSONL record per (model, post, symptom), format in its
+  docstring. Scores every item, compares TP vs FP overall and per symptom, and applies the prereg's H1
+  decision rules as code (`verdict`). Undefined metrics are left out, never scored 0.
 - `src/train_bert.py` - the baseline, hyperparameters from the config, seeds and device handling.
 - `src/inspect_data.py`, `src/figures.py` - stats + hand-reading batch, and the pipeline figure.
 - `configs/bert_baseline.yaml`, `configs/prompts.yaml` - training recipe and the M3 prompts
