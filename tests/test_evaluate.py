@@ -78,7 +78,7 @@ def test_score_plausibility_uses_other_posts_and_own_similarity_only_on_tp():
     refs = {"SLEEP_ISSUES": [[1.0, 0.0], [0.0, 1.0]], "FATIGUE": [[0.0, 1.0]]}
     row = score(record(stated_rationale="why"), {0}, "own gold", vectors, refs)
     assert row["plausibility"] == pytest.approx(0.5)
-    assert row["null"] == pytest.approx(0.0)
+    assert row["null_similarity"] == pytest.approx(0.0)
     assert row["own_similarity"] == pytest.approx(1.0)
     row = score(record(stated_rationale="why", gold=False), set(), "", vectors, refs)
     assert "own_similarity" not in row
@@ -251,3 +251,12 @@ def test_attribution_quality_is_carried_through():
     row = score(record(ig_delta=0.003, lime_r2=0.91), {0}, "", {}, {})
     assert (row["ig_delta"], row["lime_r2"]) == (0.003, 0.91)
     assert "ig_delta" not in score(record(), {0}, "", {}, {})
+
+
+def test_no_metric_name_turns_into_a_missing_value_in_the_csv(tmp_path):
+    # pandas reads "null", "NA", "nan" and friends in a CSV as missing, which would erase a metric's name
+    rec = record(stated_rationale="why", attribution={"IG": {"0": 0.9, "1": 0.1, "2": 0.5}})
+    row = score(rec, {0}, "own", {"why": [1.0, 0.0], "own": [1.0, 0.0]}, {"SLEEP_ISSUES": [[1.0, 0.0]], "FATIGUE": [[0.0, 1.0]]})
+    path = tmp_path / "names.csv"
+    pd.DataFrame({"metric": list(row)}).to_csv(path, index=False)
+    assert pd.read_csv(path)["metric"].notna().all()

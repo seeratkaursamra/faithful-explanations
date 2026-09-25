@@ -1,4 +1,4 @@
-.PHONY: test inspect inspect-sample baseline baseline5 m1 m3 evaluate figures clean
+.PHONY: test inspect inspect-sample baseline baseline5 m1 m2 m3 evaluate figures clean
 
 test:
 	python -m pytest -q tests
@@ -29,6 +29,10 @@ m1:
 # needs `ollama serve`; resumable, every call is cached
 m3:
 	python -m src.run_m3
+
+# needs a trained seed-0 checkpoint (make baseline) and `ollama serve` for the decoupled control
+m2:
+	python -m src.run_m2
 
 evaluate:
 	python -m src.evaluate outputs/records/*.jsonl

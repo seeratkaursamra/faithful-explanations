@@ -79,7 +79,7 @@ def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=
     if rationale:
         v = vectors[rationale]
         row["plausibility"] = mean_similarity(v, refs.get(record["symptom"], []))
-        row["null"] = symptom_null(v, refs, record["symptom"])
+        row["null_similarity"] = symptom_null(v, refs, record["symptom"])
         if kind == "TP" and g_text:
             row["own_similarity"] = cosine(v, vectors[g_text])
 

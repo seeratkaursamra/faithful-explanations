@@ -27,7 +27,7 @@ logged, not a quiet change.
 Built so far: data layer, sentence segmentation + gold alignment, metrics, BERT baseline, LIME over
 sentences, Integrated Gradients, lexicon markers, Ollama client with embeddings, pipeline figure.
 M1 linear model, the evaluation harness. Not yet written: the runners that produce the harness's
-input records for M2 (IG, decoupled control) and M1, and M3's LIME. The full dataset has not arrived, so
+M3's LIME. The full dataset has not arrived, so
 nothing has been run on real data yet.
 
 ## Code map
@@ -57,6 +57,8 @@ nothing has been run on real data yet.
   left out, never scored 0.
 - `src/run_m3.py` - M3 over the test split: the joint answer, then comprehensiveness and sufficiency through
   the same joint prompt, written as harness records with FNs included and a parse-failure log.
+- `src/run_m2.py` - M2 over the test split from the seed-0 checkpoint: IG and LIME on predicted symptoms, the
+  decoupled control explaining BERT's labels (held to them), and erasure on BERT of what it cites.
 - `src/train_bert.py` - the baseline, hyperparameters from the config, seeds and device handling.
 - `src/inspect_data.py`, `src/figures.py` - stats + hand-reading batch, and the pipeline figure.
 - `configs/bert_baseline.yaml`, `configs/prompts.yaml`, `configs/evaluate.yaml` - training recipe, the M3 prompts,
@@ -84,7 +86,7 @@ make test                                                  # pytest over tests/
 make inspect | inspect-sample                              # full data | public sample
 make baseline | baseline5                                  # one seed | five seeds + summary.json
 make m1                                                    # M1; needs the NRC file in data/
-make m3 | evaluate                                         # M3 records (needs ollama) | the harness
+make m2 | m3 | evaluate                                    # M2 records | M3 records (both need ollama) | the harness
 make figures                                               # regenerate figures/ (gitignored)
 python -m pytest tests/test_metrics.py::test_jaccard -q     # a single test
 ```
