@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from . import lime_sentences
 from .data import NO_SYMPTOMS, check_against_paper, load, split
 from .llm import ask
 from .metrics import erasure, jaccard
@@ -36,11 +37,24 @@ def confidence(result, label):
     return 0.0
 
 
-def post_records(post_id, text, gold_labels, prompts, ask_fn):
+def post_records(post_id, text, gold_labels, prompts, ask_fn, lime_cfg=None):
     """Harness records for one post: every symptom predicted or gold. Also returns the joint result,
-    so the caller can count parse failures and retries."""
+    so the caller can count parse failures and retries.
+
+    With lime_cfg, each predicted symptom also gets LIME over sentences through the joint prompt.
+    Every reply is kept per distinct set of sentences: one reply carries a confidence for every
+    label, so a post's perturbations are asked once and serve all its symptoms and its erasure.
+    """
     sentences = texts(text, split_sentences(text))
-    result = answer(sentences, prompts, ask_fn)
+    replies = {}
+
+    def reply(kept):
+        key = tuple(kept)
+        if key not in replies:
+            replies[key] = answer(list(kept), prompts, ask_fn)
+        return replies[key]
+
+    result = reply(sentences)
     if not result["ok"]:
         return [], result
     said = {s["label"]: s for s in result["symptoms"] if s["label"] != NO_SYMPTOMS}
@@ -53,10 +67,20 @@ def post_records(post_id, text, gold_labels, prompts, ask_fn):
         if s is not None:
             p_full = None if s["confidence"] is None else s["confidence"] / 100
             record["comprehensiveness"], record["sufficiency"] = erasure(
-                sentences, set(s["evidence"]), p_full,
-                lambda kept, label=label: confidence(answer(kept, prompts, ask_fn), label))
+                sentences, set(s["evidence"]), p_full, lambda kept, label=label: confidence(reply(kept), label))
             record.update(stated_evidence=s["evidence"], stated_rationale=s["rationale"] or None,
                           confidence=p_full)
+            if lime_cfg is not None:
+                unscored = []
+
+                def predict(samples, label=label):
+                    scores = [confidence(reply(kept), label) for kept in samples]
+                    unscored.extend(x for x in scores if x is None)
+                    return scores
+
+                weights, record["lime_r2"] = lime_sentences.explain(sentences, predict, **lime_cfg)
+                record["attribution"] = {"LIME": {str(i): w for i, w in weights.items()}}
+                record["lime_unscored"] = len(unscored)
         records.append(record)
     return records, result
 
@@ -96,7 +120,10 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--temperature", type=float, default=0.0, help="0 for the main run; 0.3 for stability runs")
     ap.add_argument("--stability", nargs="+", metavar="JSONL", help="compare finished runs instead of running")
+    ap.add_argument("--lime", action="store_true", help="also LIME on every predicted symptom: the long run")
+    ap.add_argument("--config", default="configs/attribution.yaml")
     args = ap.parse_args()
+    lime_cfg = yaml.safe_load(Path(args.config).read_text())["lime"] if args.lime else None
 
     posts, _ = load(args.data)
     if not args.allow_mismatch and not check_against_paper(posts)["matches_paper"]:
@@ -114,7 +141,7 @@ def main():
 
     def one(row):
         return post_records(row.post_id, row.text, row.labels, prompts,
-                            partial(ask, seed=args.seed, temperature=args.temperature))
+                            partial(ask, seed=args.seed, temperature=args.temperature), lime_cfg)
 
     with ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(one, test.itertuples()))
@@ -128,6 +155,10 @@ def main():
     failed = [pid for pid, (_, r) in zip(test.post_id, results) if not r["ok"]]
     log = {"posts": len(test), "parse_failures": len(failed), "failure_rate": len(failed) / len(test),
            "failed_posts": failed, "retried": sum(r["attempts"] > 1 for _, r in results)}
+    if args.lime:
+        lime = [r for records, _ in results for r in records if "lime_unscored" in r]
+        log["lime_explained"] = len(lime)
+        log["lime_unscored_perturbations"] = sum(r["lime_unscored"] for r in lime)
     (out / "m3_log.json").write_text(json.dumps(log, indent=2))
     print(f"{sum(len(r) for r, _ in results)} records from {len(test)} posts; "
           f"parse failures {len(failed)} ({log['failure_rate']:.1%}, prereg limit 10%)")

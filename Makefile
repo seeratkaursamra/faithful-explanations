@@ -1,4 +1,4 @@
-.PHONY: test inspect inspect-sample baseline baseline5 m1 m2 m3 evaluate figures clean
+.PHONY: test inspect inspect-sample baseline baseline5 m1 m2 m3 m3-lime evaluate figures clean
 
 test:
 	python -m pytest -q tests
@@ -29,6 +29,10 @@ m1:
 # needs `ollama serve`; resumable, every call is cached
 m3:
 	python -m src.run_m3
+
+# the overnight job: LIME on every M3 prediction; raise OLLAMA_NUM_PARALLEL and --workers to match
+m3-lime:
+	python -m src.run_m3 --lime --out outputs/records/m3_lime
 
 # needs a trained seed-0 checkpoint (make baseline) and `ollama serve` for the decoupled control
 m2:

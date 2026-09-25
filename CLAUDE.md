@@ -26,9 +26,8 @@ logged, not a quiet change.
 
 Built so far: data layer, sentence segmentation + gold alignment, metrics, BERT baseline, LIME over
 sentences, Integrated Gradients, lexicon markers, Ollama client with embeddings, pipeline figure.
-M1 linear model, the evaluation harness. Not yet written: the runners that produce the harness's
-M3's LIME. The full dataset has not arrived, so
-nothing has been run on real data yet.
+M1 linear model, the evaluation harness, and every runner that produces the harness's input.
+The full dataset has not arrived, so nothing has been run on real data yet.
 
 ## Code map
 - `src/data.py` - the only place the label scheme and the split live. Everything else imports `load`,
@@ -56,7 +55,8 @@ nothing has been run on real data yet.
   applies the prereg's H1 and H3 decision rules as code (`verdict`, `h3_verdict`). Undefined metrics are
   left out, never scored 0.
 - `src/run_m3.py` - M3 over the test split: the joint answer, then comprehensiveness and sufficiency through
-  the same joint prompt, written as harness records with FNs included and a parse-failure log.
+  the same joint prompt, written as harness records with FNs included and a parse-failure log. `--lime`
+  adds LIME per predicted symptom (the overnight run); each perturbation is asked once per post.
 - `src/run_m2.py` - M2 over the test split from the seed-0 checkpoint: IG and LIME on predicted symptoms, the
   decoupled control explaining BERT's labels (held to them), and erasure on BERT of what it cites.
 - `src/train_bert.py` - the baseline, hyperparameters from the config, seeds and device handling.

@@ -97,3 +97,55 @@ def test_stability_counts_agreeing_on_nothing_as_agreement():
 def test_stability_of_identical_runs_is_one():
     run = [rec("p1", "SLEEP_ISSUES", [0])]
     assert stability([run, run, run], ["p1", "p2"])["labels"] == 1.0
+
+
+
+def two_symptom_ask(prompts_seen, fail_every=None):
+    """A stand-in M3 that sees SLEEP_ISSUES in sentences about sleep and FATIGUE in ones about being
+    tired, with 90 and 70 confidence. It records every prompt, and can fail every Nth call."""
+    def ask(prompt, system, n_sentences=None):
+        prompts_seen.append(prompt)
+        if fail_every and len(prompts_seen) % fail_every == 0:
+            return {"ok": False, "attempts": 3, "symptoms": None, "reason": "not json"}
+        lines = re.findall(r"^(\d+): (.*)$", prompt, flags=re.M)
+        found = []
+        for label, word, conf in [("SLEEP_ISSUES", "sleep", 90), ("FATIGUE", "tired", 70)]:
+            cited = [int(i) for i, s in lines if word in s.lower()]
+            if cited:
+                found.append({"label": label, "evidence": cited, "rationale": word, "confidence": conf})
+        return {"ok": True, "attempts": 1, "symptoms": found or [
+            {"label": "NO_SYMPTOMS", "evidence": [], "rationale": "", "confidence": 80}]}
+    return ask
+
+
+POST = "I cannot sleep. The weather is fine. I am so tired. Dinner was nice."
+
+
+def test_lime_finds_the_sentence_behind_each_symptom():
+    records, _ = post_records("p1", POST, ["SLEEP_ISSUES"], PROMPTS, two_symptom_ask([]),
+                              lime_cfg={"n_samples": 60, "seed": 0})
+    by = {r["symptom"]: r for r in records}
+    for label, sentence in [("SLEEP_ISSUES", "0"), ("FATIGUE", "2")]:
+        weights = by[label]["attribution"]["LIME"]
+        assert set(weights) == {"0", "1", "2", "3"}
+        assert max(weights, key=weights.get) == sentence
+        # the stand-in is exactly linear, yet R-squared is only ~0.85 at 60 samples: LIME's fixed ridge
+        # penalty shrinks the fit when samples are few (0.97 at 200, 0.997 at 1,000)
+        assert by[label]["lime_r2"] > 0.8 and by[label]["lime_unscored"] == 0
+
+
+def test_a_perturbation_is_asked_once_for_every_symptom_and_the_erasure():
+    seen = []
+    post_records("p1", POST, [], PROMPTS, two_symptom_ask(seen), lime_cfg={"n_samples": 60, "seed": 0})
+    assert len(seen) == len(set(seen))                  # no set of sentences was ever asked twice
+    assert len(seen) <= 60 + 4                          # one set of perturbations, plus at most 4 erasure posts
+
+
+def test_lime_off_by_default_and_failed_perturbations_are_counted():
+    records, _ = post_records("p1", POST, [], PROMPTS, two_symptom_ask([]))
+    assert all(r["attribution"] == {} and "lime_r2" not in r for r in records)
+    records, _ = post_records("p1", POST, [], PROMPTS, two_symptom_ask([], fail_every=5),
+                              lime_cfg={"n_samples": 60, "seed": 0})
+    sleep = next(r for r in records if r["symptom"] == "SLEEP_ISSUES")
+    assert sleep["lime_unscored"] > 0
+    assert max(sleep["attribution"]["LIME"], key=sleep["attribution"]["LIME"].get) == "0"
