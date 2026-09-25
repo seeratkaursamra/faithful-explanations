@@ -79,47 +79,77 @@ def sentence_scores(token_scores, token_sentence, normalise=True):
     return {sid: total[sid] / length[sid] if normalise else total[sid] for sid in total}
 
 
-def bootstrap_ci(values, n_resamples=1000, seed=0):
-    """Mean with a 95% percentile bootstrap interval over posts."""
-    values = np.asarray(values, dtype=float)
+def _post_draws(groups, n_resamples, seed):
+    """Item positions for each resample: draw posts with replacement and keep every item they have.
+
+    groups holds one list of post ids per group, aligned with that group's values. A post with
+    items in two groups (a TP for one symptom, an FP for another) brings both along together.
+    With no post ids, each item is its own post and this is the ordinary bootstrap.
+    """
+    everything = list(dict.fromkeys(p for posts in groups for p in posts))
+    where = []
+    for posts in groups:
+        items = {}
+        for i, p in enumerate(posts):
+            items.setdefault(p, []).append(i)
+        where.append(items)
     rng = np.random.default_rng(seed)
-    means = [rng.choice(values, size=len(values), replace=True).mean() for _ in range(n_resamples)]
-    return float(values.mean()), float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
+    for _ in range(n_resamples):
+        drawn = [everything[d] for d in rng.integers(0, len(everything), len(everything))]
+        yield [np.array([i for p in drawn for i in items.get(p, [])], dtype=int) for items in where]
 
 
-def paired_diff_ci(a, b, n_resamples=1000, seed=0):
+def _ids(posts, n, group):
+    return [(group, i) for i in range(n)] if posts is None else list(posts)
+
+
+def _interval(observed, draws):
+    """Percentile interval, skipping resamples where a group came out empty."""
+    draws = [d for d in draws if not np.isnan(d)]
+    return float(observed), float(np.percentile(draws, 2.5)), float(np.percentile(draws, 97.5))
+
+
+def _mean(values, idx):
+    return values[idx].mean() if len(idx) else np.nan
+
+
+def bootstrap_ci(values, posts=None, n_resamples=1000, seed=0):
+    """Mean with a 95% percentile bootstrap interval over posts. posts gives each value's post id."""
+    values = np.asarray(values, dtype=float)
+    groups = [_ids(posts, len(values), "a")]
+    return _interval(values.mean(), [_mean(values, i) for (i,) in _post_draws(groups, n_resamples, seed)])
+
+
+def paired_diff_ci(a, b, posts=None, n_resamples=1000, seed=0):
     """Mean of a - b over the same items, with a bootstrap interval. Use when a and b are aligned."""
     d = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
-    return bootstrap_ci(d, n_resamples, seed)
+    return bootstrap_ci(d, posts, n_resamples, seed)
 
 
-def unpaired_diff_ci(a, b, n_resamples=1000, seed=0):
-    """mean(a) - mean(b) for two disjoint groups, with a bootstrap interval. Each group resampled alone."""
+def unpaired_diff_ci(a, b, posts_a=None, posts_b=None, n_resamples=1000, seed=0):
+    """mean(a) - mean(b) for two disjoint groups of items, with a bootstrap interval over posts."""
     a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
-    rng = np.random.default_rng(seed)
-    diffs = [rng.choice(a, len(a), replace=True).mean() - rng.choice(b, len(b), replace=True).mean()
-             for _ in range(n_resamples)]
-    return float(a.mean() - b.mean()), float(np.percentile(diffs, 2.5)), float(np.percentile(diffs, 97.5))
+    groups = [_ids(posts_a, len(a), "a"), _ids(posts_b, len(b), "b")]
+    return _interval(a.mean() - b.mean(),
+                     [_mean(a, i) - _mean(b, j) for i, j in _post_draws(groups, n_resamples, seed)])
 
 
-def did_ci(plaus_correct, faith_correct, plaus_wrong, faith_wrong, n_resamples=1000, seed=0):
+def did_ci(plaus_correct, faith_correct, plaus_wrong, faith_wrong, posts_correct=None, posts_wrong=None,
+           n_resamples=1000, seed=0):
     """H1 as one number: the faithfulness correct-wrong gap minus the plausibility correct-wrong gap.
 
-    Both metrics come from the same items, so a resample draws item positions once and reads
-    plausibility and faithfulness from the same draw.
+    Plausibility and faithfulness come from the same items, so one draw of posts is read for both.
     """
     plaus_correct, faith_correct = np.asarray(plaus_correct, float), np.asarray(faith_correct, float)
     plaus_wrong, faith_wrong = np.asarray(plaus_wrong, float), np.asarray(faith_wrong, float)
 
     def did(i, j):
-        return ((faith_correct[i].mean() - faith_wrong[j].mean())
-                - (plaus_correct[i].mean() - plaus_wrong[j].mean()))
+        return ((_mean(faith_correct, i) - _mean(faith_wrong, j))
+                - (_mean(plaus_correct, i) - _mean(plaus_wrong, j)))
 
-    rng = np.random.default_rng(seed)
-    draws = [did(rng.integers(0, len(plaus_correct), len(plaus_correct)),
-                 rng.integers(0, len(plaus_wrong), len(plaus_wrong))) for _ in range(n_resamples)]
+    groups = [_ids(posts_correct, len(plaus_correct), "c"), _ids(posts_wrong, len(plaus_wrong), "w")]
     observed = did(np.arange(len(plaus_correct)), np.arange(len(plaus_wrong)))
-    return float(observed), float(np.percentile(draws, 2.5)), float(np.percentile(draws, 97.5))
+    return _interval(observed, [did(i, j) for i, j in _post_draws(groups, n_resamples, seed)])
 
 
 def wilcoxon_p(a, b):

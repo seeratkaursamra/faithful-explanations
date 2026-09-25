@@ -134,6 +134,44 @@ def test_did_ci_is_zero_when_both_metrics_drop_together():
     assert observed == pytest.approx(0.0)
 
 
+def test_bootstrap_over_posts_is_not_fooled_by_repeated_items():
+    # each post contributes the same value twice; resampling posts must give exactly the interval of
+    # one value per post, while resampling items treats the copies as independent and narrows it
+    per_post = [0.2, 0.9, 0.4, 0.7, 0.5, 0.1, 0.8]
+    twice = [v for v in per_post for _ in range(2)]
+    posts = [p for p in range(len(per_post)) for _ in range(2)]
+    assert bootstrap_ci(twice, posts=posts, seed=3) == pytest.approx(bootstrap_ci(per_post, seed=3))
+    _, lo_items, hi_items = bootstrap_ci(twice, seed=3)
+    _, lo_posts, hi_posts = bootstrap_ci(twice, posts=posts, seed=3)
+    assert hi_items - lo_items < hi_posts - lo_posts
+
+
+# Each post has one correct and one wrong item. The level varies a lot between posts, but within every
+# post the wrong item is exactly 0.5 lower. Drawing a post brings both of its items, so every resample
+# sees the same 0.5 gap and the interval collapses; drawing the groups independently cannot know that.
+LEVELS = [0.9, 0.6, 0.8, 0.55, 0.95, 0.7]
+POSTS = list(range(len(LEVELS)))
+
+
+def test_unpaired_diff_draws_a_posts_items_together():
+    right, wrong = LEVELS, [v - 0.5 for v in LEVELS]
+    assert unpaired_diff_ci(right, wrong, posts_a=POSTS, posts_b=POSTS, n_resamples=200) == \
+        pytest.approx((0.5, 0.5, 0.5))
+    _, lo, hi = unpaired_diff_ci(right, wrong, n_resamples=200)
+    assert hi - lo > 0.05
+
+
+def test_did_ci_draws_a_posts_items_together():
+    # plausibility flat everywhere, faithfulness 0.5 lower on each post's wrong item: H1 wants +0.5.
+    # (If plausibility carried the same per-post levels they would cancel out of the DiD whatever was drawn.)
+    plaus = [0.8] * len(LEVELS)
+    faith_correct, faith_wrong = LEVELS, [v - 0.5 for v in LEVELS]
+    assert did_ci(plaus, faith_correct, plaus, faith_wrong, posts_correct=POSTS, posts_wrong=POSTS,
+                  n_resamples=200) == pytest.approx((0.5, 0.5, 0.5))
+    _, lo, hi = did_ci(plaus, faith_correct, plaus, faith_wrong, n_resamples=200)
+    assert hi - lo > 0.05
+
+
 def test_wilcoxon_and_mann_whitney():
     assert math.isnan(wilcoxon_p([0.3, 0.4], [0.3, 0.4]))
     shifted = [x + 0.5 for x in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]]
