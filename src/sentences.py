@@ -62,19 +62,25 @@ def align(gold_text, text, spans, threshold=0.5):
 
     Returns (index, how). 'exact' when the strings are the same, 'contains' when one holds the
     other, 'overlap' when word overlap clears the threshold, 'none' with index -1 when nothing does.
+
+    A containment match loses to a sentence that overlaps the gold better and clears the threshold,
+    so a short line like "why" that happens to sit inside the gold sentence cannot take its place.
     """
-    gold = (gold_text or "").strip()
+    gold = gold_text.strip() if isinstance(gold_text, str) else ""
     sentences = [s.strip() for s in texts(text, spans)]
     if not gold or not sentences:
         return -1, "none"
     for i, s in enumerate(sentences):
         if s == gold:
             return i, "exact"
-    for i, s in enumerate(sentences):
-        if gold in s or s in gold:
-            return i, "contains"
     gold_words = _words(gold)
-    best, index = max((jaccard(gold_words, _words(s)), i) for i, s in enumerate(sentences))
+    overlap = [(jaccard(gold_words, _words(s)), i) for i, s in enumerate(sentences)]
+    best, index = max(overlap)
+    contained = [(o, i) for o, i in overlap if gold in sentences[i] or sentences[i] in gold]
+    if contained:
+        c_best, c_index = max(contained)
+        if not (best >= threshold and best > c_best):
+            return c_index, "contains"
     return (index, "overlap") if best >= threshold else (-1, "none")
 
 

@@ -75,6 +75,19 @@ def test_align_falls_back_to_word_overlap():
     assert (index, how) == (0, "overlap")
 
 
+def test_a_short_line_inside_the_gold_does_not_beat_the_real_sentence():
+    # "why" sits inside the gold sentence, but sentence 1 is the gold one, differing only by apostrophes
+    text = "why\nI dont know why I cant sleep anymore."
+    spans = split(text)
+    assert align("I don't know why I can't sleep anymore.", text, spans) == (1, "overlap")
+
+
+def test_align_handles_a_missing_gold_sentence():
+    text = "I cannot sleep."
+    assert align(float("nan"), text, split(text)) == (-1, "none")
+    assert align(None, text, split(text)) == (-1, "none")
+
+
 def test_alignment_report_counts_every_row_once():
     posts = pd.DataFrame({"post_id": ["p1"], "text": ["I cannot sleep. My appetite is gone."]})
     annotations = pd.DataFrame({
