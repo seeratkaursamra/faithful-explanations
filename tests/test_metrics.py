@@ -2,8 +2,10 @@ import math
 
 import pytest
 
-from src.metrics import (bootstrap_ci, comprehensiveness, cosine, jaccard, precision_at_k,
-                         precision_recall_f1, rank_agreement, sentence_scores, sufficiency, top_k)
+from src.metrics import (bootstrap_ci, cliffs_delta, comprehensiveness, cosine, did_ci, holm,
+                         jaccard, mann_whitney_p, paired_diff_ci, precision_at_k,
+                         precision_recall_f1, rank_agreement, sentence_scores, sufficiency, top_k,
+                         unpaired_diff_ci, wilcoxon_p)
 
 
 def test_jaccard():
@@ -82,3 +84,57 @@ def test_bootstrap_ci_brackets_the_mean():
     assert lo > 1.0 and hi < 5.0
     # constant data has a zero-width interval
     assert bootstrap_ci([2, 2, 2], seed=0) == (2.0, 2.0, 2.0)
+
+
+def test_paired_diff_ci_on_a_constant_gap():
+    # every item differs by exactly 0.2, so the mean gap is 0.2 and the interval collapses onto it
+    a = [0.5, 0.6, 0.7, 0.8]
+    b = [0.3, 0.4, 0.5, 0.6]
+    mean, lo, hi = paired_diff_ci(a, b, n_resamples=200)
+    assert mean == pytest.approx(0.2)
+    assert lo == pytest.approx(0.2)
+    assert hi == pytest.approx(0.2)
+
+
+def test_unpaired_diff_ci_on_two_constant_groups():
+    mean, lo, hi = unpaired_diff_ci([0.8, 0.8, 0.8], [0.5, 0.5], n_resamples=200)
+    assert mean == pytest.approx(0.3)
+    assert lo == pytest.approx(0.3)
+    assert hi == pytest.approx(0.3)
+
+
+def test_did_ci_isolates_the_faithfulness_drop():
+    # plausibility is 0.8 whether the prediction is right or wrong; faithfulness falls 0.7 -> 0.2.
+    # H1's shape exactly: the plausibility gap is 0, the faithfulness gap is 0.5, so H1 wants +0.5.
+    plaus_correct, plaus_wrong = [0.8, 0.8, 0.8], [0.8, 0.8]
+    faith_correct, faith_wrong = [0.7, 0.7, 0.7], [0.2, 0.2]
+    observed, lo, hi = did_ci(plaus_correct, faith_correct, plaus_wrong, faith_wrong, n_resamples=200)
+    assert observed == pytest.approx(0.5)
+    assert lo == pytest.approx(0.5)
+    assert hi == pytest.approx(0.5)
+
+
+def test_did_ci_is_zero_when_both_metrics_drop_together():
+    # both fall by 0.4, so nothing distinguishes plausibility from faithfulness: H1 unsupported
+    observed, _, _ = did_ci([0.8, 0.8], [0.7, 0.7], [0.4, 0.4], [0.3, 0.3], n_resamples=200)
+    assert observed == pytest.approx(0.0)
+
+
+def test_wilcoxon_and_mann_whitney():
+    assert math.isnan(wilcoxon_p([0.3, 0.4], [0.3, 0.4]))
+    shifted = [x + 0.5 for x in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]]
+    assert wilcoxon_p(shifted, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]) < 0.05
+    assert mann_whitney_p([5, 6, 7, 8], [1, 2, 3, 4]) < 0.05
+
+
+def test_cliffs_delta_spans_minus_one_to_one():
+    assert cliffs_delta([1, 2, 3], [0]) == pytest.approx(1.0)
+    assert cliffs_delta([1, 2, 3], [4]) == pytest.approx(-1.0)
+    assert cliffs_delta([1, 2], [1, 2]) == pytest.approx(0.0)
+    assert cliffs_delta([2, 4], [1, 5]) == pytest.approx(0.0)
+
+
+def test_holm_steps_down_and_stays_monotone():
+    # n=3: 3*0.01=0.03, then 2*0.03=0.06, then 1*0.04 is smaller so the running max holds at 0.06
+    assert holm([0.01, 0.04, 0.03]) == pytest.approx([0.03, 0.06, 0.06])
+    assert holm([0.5, 0.5]) == pytest.approx([1.0, 1.0])
