@@ -25,6 +25,11 @@ def load_nrc(path="data/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt", categories=NRC
         parts = line.split("\t")
         if len(parts) == 3 and parts[1] in categories and parts[2] == "1":
             words.add(parts[0])
+    # a wrong file (sense-level, VAD, intensity) parses to nothing, which would quietly make negative
+    # affect 0 for every post; stop instead
+    if not words:
+        raise ValueError(f"no {', '.join(categories)} words in {path}: expected the word-level EmoLex file, "
+                         "one 'word<TAB>emotion<TAB>0 or 1' per line")
     return words
 
 

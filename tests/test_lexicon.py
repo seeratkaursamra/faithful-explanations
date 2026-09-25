@@ -43,3 +43,11 @@ def test_load_nrc_keeps_only_the_chosen_emotions(tmp_path):
     ]))
     assert load_nrc(path) == {"afraid", "grief"}
     assert load_nrc(path, categories=("negative",)) == {"awful"}
+
+
+def test_load_nrc_refuses_a_file_that_yields_no_words(tmp_path):
+    # the VAD lexicon's shape: word and three scores, no emotion column
+    vad = tmp_path / "vad.txt"
+    vad.write_text("word\tvalence\tarousal\tdominance\nafraid\t0.1\t0.8\t0.2\n")
+    with pytest.raises(ValueError, match="word-level EmoLex"):
+        load_nrc(vad)
