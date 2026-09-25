@@ -23,6 +23,9 @@ pip install -r requirements.txt
 make test             # data-layer tests, run on the sample
 make inspect          # full data: checks counts against the paper, writes docs/reading_sample.md
 make inspect-sample   # same on the public sample; the mismatch with the paper is expected
+make baseline         # one seed of the ReDSM5 BERT baseline
+make baseline5        # five seeds + summary; target micro-F1 0.51 +/- 0.02
 ```
 
-Generated files go in `outputs/`. My notes from reading posts by hand are in `docs/observations.md`.
+Generated files go in `outputs/`. My notes from reading posts by hand are in `docs/observations.md`,
+design decisions in `docs/decision_log.md`.

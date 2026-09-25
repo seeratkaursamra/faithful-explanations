@@ -1,4 +1,4 @@
-.PHONY: test inspect inspect-sample clean
+.PHONY: test inspect inspect-sample baseline baseline5 clean
 
 test:
 	python -m pytest -q tests
@@ -12,3 +12,9 @@ inspect-sample:
 
 clean:
 	rm -rf outputs/* docs/reading_sample.md
+
+baseline:
+	python -m src.train_bert --config configs/bert_baseline.yaml --seed 0
+
+baseline5:
+	python -m src.train_bert --config configs/bert_baseline.yaml --seeds 0 1 2 3 4
