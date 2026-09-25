@@ -76,17 +76,26 @@ def test_rank_agreement():
     assert rank_agreement(a, {**same, "s9": 100}) == pytest.approx(1.0)
 
 
-def test_sentence_scores_sums_positives_and_normalises():
+def test_sentence_scores_default_is_the_signed_sum():
     # sentence 0 has 3 tokens (0.5, -1.0, 0.5), sentence 1 has 2 tokens (0.2, 0.2)
     tokens = [0.5, -1.0, 0.5, 0.2, 0.2]
     sents = [0, 0, 0, 1, 1]
-    assert sentence_scores(tokens, sents, normalise=False) == {0: pytest.approx(1.0), 1: pytest.approx(0.4)}
-    assert sentence_scores(tokens, sents, normalise=True) == {0: pytest.approx(1 / 3), 1: pytest.approx(0.2)}
+    scores = sentence_scores(tokens, sents)
+    assert scores == {0: pytest.approx(0.0), 1: pytest.approx(0.4)}
+    assert sum(scores.values()) == pytest.approx(sum(tokens))      # completeness carries over
+
+
+def test_sentence_scores_options_clip_and_normalise():
+    tokens = [0.5, -1.0, 0.5, 0.2, 0.2]
+    sents = [0, 0, 0, 1, 1]
+    assert sentence_scores(tokens, sents, positive_only=True) == {0: pytest.approx(1.0), 1: pytest.approx(0.4)}
+    assert sentence_scores(tokens, sents, normalise=True, positive_only=True) == \
+        {0: pytest.approx(1 / 3), 1: pytest.approx(0.2)}
 
 
 def test_sentence_scores_drops_special_tokens():
     # token_sentences marks [CLS] and [SEP] as -1; a large score there must not become a "sentence"
-    scores = sentence_scores([0.9, 0.2, 0.1, 0.3, 0.7], [-1, 0, 0, 1, -1])
+    scores = sentence_scores([0.9, 0.2, 0.1, 0.5, 0.7], [-1, 0, 0, 1, -1])      # sentence 0 is 0.3, sentence 1 is 0.5
     assert set(scores) == {0, 1}
     assert top_k(scores, 1) == {1}
 

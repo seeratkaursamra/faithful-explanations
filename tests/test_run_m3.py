@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from src.run_m3 import confidence, erasure, post_records
+from src.run_m3 import confidence, erasure, post_records, stability
 
 PROMPTS = {"system": "s", "joint": "Post:\n{numbered_post}\nAnswer."}
 
@@ -72,3 +72,22 @@ def test_a_parse_failure_gives_no_records_and_is_reported():
     failing = lambda *a, **k: {"ok": False, "attempts": 3, "symptoms": None, "reason": "not json"}
     records, result = post_records("p4", "I cannot sleep.", ["SLEEP_ISSUES"], PROMPTS, failing)
     assert records == [] and not result["ok"]
+
+
+def rec(post, symptom, evidence):
+    return {"post_id": post, "symptom": symptom, "predicted": True, "stated_evidence": evidence}
+
+
+def test_stability_counts_agreeing_on_nothing_as_agreement():
+    run_a = [rec("p1", "SLEEP_ISSUES", [0, 1])]
+    run_b = [rec("p1", "SLEEP_ISSUES", [0]), rec("p1", "FATIGUE", [2])]
+    s = stability([run_a, run_b], ["p1", "p2"])
+    # p1: {SLEEP} vs {SLEEP, FATIGUE} = 0.5; p2: both predict nothing = 1.0
+    assert s["labels"] == pytest.approx(0.75)
+    # only SLEEP_ISSUES on p1 was predicted by both: {0, 1} vs {0} = 0.5
+    assert s["evidence"] == pytest.approx(0.5) and s["n_shared_predictions"] == 1
+
+
+def test_stability_of_identical_runs_is_one():
+    run = [rec("p1", "SLEEP_ISSUES", [0])]
+    assert stability([run, run, run], ["p1", "p2"])["labels"] == 1.0

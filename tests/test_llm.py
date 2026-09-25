@@ -134,3 +134,14 @@ def test_embed_batches_and_applies_the_prefix(tmp_path):
     # a different prefix is a different cache entry, not a hit
     embed(["a"], cache_dir=tmp_path, post=fake_embedder(calls))
     assert calls[-1]["input"] == ["a"]
+
+
+def test_ask_first_pass_can_sample_for_stability_runs():
+    seen = []
+
+    def call(prompt, system, seed=0, temperature=0, **kw):
+        seen.append(temperature)
+        return "garbage" if len(seen) < 2 else GOOD
+
+    ask("p", "s", n_sentences=5, temperature=0.5, retry_temperature=0.3, call=call)
+    assert seen == [0.5, 0.5]            # a retry never cools below the first pass

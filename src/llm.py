@@ -142,7 +142,7 @@ def repair(prompt, reason):
             "Return only the JSON object described above, with nothing before or after it.")
 
 
-def ask(prompt, system, n_sentences=None, attempts=3, seed=0, retry_temperature=0.3,
+def ask(prompt, system, n_sentences=None, attempts=3, seed=0, temperature=0, retry_temperature=0.3,
         call=generate, **kwargs):
     """Call the model, parse the reply, and retry a malformed one.
 
@@ -151,11 +151,14 @@ def ask(prompt, system, n_sentences=None, attempts=3, seed=0, retry_temperature=
     an unchanged reply. A retry therefore says what was wrong and raises the temperature, which
     is the only way to draw a different sample.
 
+    `temperature` above 0 is only for the stability runs, where sampling is the point.
+
     Returns {ok, symptoms, reason, attempts, raw}. ok is False when every attempt failed a check.
     """
     reason, raw, text = "no attempts made", None, prompt
     for i in range(attempts):
-        raw = call(text, system, seed=seed, temperature=0 if i == 0 else retry_temperature, **kwargs)
+        warmth = temperature if i == 0 else max(temperature, retry_temperature)
+        raw = call(text, system, seed=seed, temperature=warmth, **kwargs)
         symptoms, reason = parse(raw, n_sentences)
         if symptoms is not None:
             return {"ok": True, "symptoms": symptoms, "reason": "ok", "attempts": i + 1, "raw": raw}

@@ -80,16 +80,18 @@ def rank_agreement(scores_a, scores_b):
     return float(rho)
 
 
-def sentence_scores(token_scores, token_sentence, normalise=True):
-    """Aggregate token attributions to sentences: sum of positive scores, divided by length if normalise.
+def sentence_scores(token_scores, token_sentence, normalise=False, positive_only=False):
+    """Aggregate token attributions to sentences: the plain signed sum by default.
 
-    Special tokens carry sentence id -1 and are dropped, or [CLS] could rank as a sentence.
+    Signed and unnormalised, the sentence scores add up to what the token scores add up to, so IG's
+    completeness carries over to sentences, and a sentence is scored like LIME scores it: by its
+    whole effect, not its average token. Special tokens carry sentence id -1 and are dropped.
     """
     total, length = {}, {}
     for score, sid in zip(token_scores, token_sentence):
         if sid < 0:
             continue
-        total[sid] = total.get(sid, 0.0) + max(score, 0.0)
+        total[sid] = total.get(sid, 0.0) + (max(score, 0.0) if positive_only else score)
         length[sid] = length.get(sid, 0) + 1
     return {sid: total[sid] / length[sid] if normalise else total[sid] for sid in total}
 

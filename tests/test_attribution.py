@@ -80,4 +80,14 @@ def test_explain_scores_every_sentence_and_nothing_else(tmp_path):
     text = "I cannot sleep. My appetite is gone. Tired."
     scores, delta = explain(model, tok, text, split(text), target=1, steps=20)
     assert set(scores) == {0, 1, 2}
-    assert all(s >= 0 for s in scores.values())      # sentence_scores keeps positive evidence only
+
+
+def test_explain_sentence_scores_keep_igs_completeness(tmp_path):
+    # the specials get 0, so the sentences must add up to exactly what the tokens add up to
+    tok, model = tokenizer(tmp_path), tiny_bert()
+    text = "I cannot sleep. My appetite is gone. Tired."
+    scores, _ = explain(model, tok, text, split(text), target=1, steps=20)
+    enc = tok(text, return_tensors="pt")
+    tokens, _ = integrated_gradients(model, enc["input_ids"], enc["attention_mask"],
+                                     baseline_ids(enc["input_ids"], tok), target=1, steps=20)
+    assert sum(scores.values()) == pytest.approx(sum(tokens), abs=1e-6)

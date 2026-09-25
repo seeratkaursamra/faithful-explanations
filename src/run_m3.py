@@ -2,12 +2,15 @@
 import argparse
 import json
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from itertools import combinations
 from pathlib import Path
 
 import yaml
 
 from .data import NO_SYMPTOMS, check_against_paper, load, split
 from .llm import ask
+from .metrics import jaccard
 from .sentences import split as split_sentences
 from .sentences import texts
 
@@ -73,6 +76,30 @@ def post_records(post_id, text, gold_labels, prompts, ask_fn):
     return records, result
 
 
+def _agree(a, b):
+    """Jaccard, except that two runs both saying "nothing" agree completely."""
+    return 1.0 if not a and not b else jaccard(a, b)
+
+
+def stability(runs, post_ids):
+    """Mean pairwise agreement between runs of the same posts: of the predicted label sets per post,
+    and of the cited evidence per (post, symptom) that both runs predicted."""
+    labels = [{p: set() for p in post_ids} for _ in runs]
+    evidence = [{} for _ in runs]
+    for i, records in enumerate(runs):
+        for r in records:
+            if r["predicted"]:
+                labels[i][r["post_id"]].add(r["symptom"])
+                evidence[i][(r["post_id"], r["symptom"])] = set(r["stated_evidence"] or [])
+    label_scores, evidence_scores = [], []
+    for a, b in combinations(range(len(runs)), 2):
+        label_scores += [_agree(labels[a][p], labels[b][p]) for p in post_ids]
+        evidence_scores += [_agree(evidence[a][k], evidence[b][k]) for k in evidence[a].keys() & evidence[b].keys()]
+    mean = lambda xs: sum(xs) / len(xs) if xs else float("nan")
+    return {"labels": mean(label_scores), "evidence": mean(evidence_scores),
+            "n_posts": len(post_ids), "n_shared_predictions": len(evidence_scores)}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data")
@@ -81,6 +108,9 @@ def main():
     ap.add_argument("--workers", type=int, default=1, help="parallel requests; set OLLAMA_NUM_PARALLEL to match")
     ap.add_argument("--limit", type=int, default=None, help="first N test posts only, for a trial run")
     ap.add_argument("--allow-mismatch", action="store_true", help="for the public sample")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--temperature", type=float, default=0.0, help="0 for the main run; 0.3 for stability runs")
+    ap.add_argument("--stability", nargs="+", metavar="JSONL", help="compare finished runs instead of running")
     args = ap.parse_args()
 
     posts, _ = load(args.data)
@@ -88,10 +118,18 @@ def main():
         raise SystemExit("data does not match the paper, refusing to run")
     _, test = split(posts)
     test = test.head(args.limit) if args.limit else test
+
+    if args.stability:
+        # the post list comes from the split, not the records: a post every run calls empty writes
+        # no records, and it is full agreement that must still be counted
+        runs = [[json.loads(l) for l in Path(f).read_text().splitlines() if l] for f in args.stability]
+        print(json.dumps(stability(runs, list(test.post_id)), indent=2))
+        return
     prompts = yaml.safe_load(Path(args.prompts).read_text())
 
     def one(row):
-        return post_records(row.post_id, row.text, row.labels, prompts, ask)
+        return post_records(row.post_id, row.text, row.labels, prompts,
+                            partial(ask, seed=args.seed, temperature=args.temperature))
 
     with ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(one, test.itertuples()))
