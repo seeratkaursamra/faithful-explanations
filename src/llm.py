@@ -10,6 +10,7 @@ from pathlib import Path
 from .data import NO_SYMPTOMS, SYMPTOMS
 
 URL = "http://localhost:11434/api/generate"
+EMBED_URL = "http://localhost:11434/api/embed"
 VALID_LABELS = set(SYMPTOMS) | {NO_SYMPTOMS}
 
 
@@ -99,6 +100,40 @@ def _cache_path(cache_dir, body):
         return None
     key = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
     return Path(cache_dir) / f"{key}.json"
+
+
+def _post(url, body, timeout=300):
+    request = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+    return json.loads(urllib.request.urlopen(request, timeout=timeout).read())
+
+
+def embed(texts, model="nomic-embed-text", prefix="", batch=64, cache_dir="outputs/embed_cache", post=_post):
+    """One vector per text, in order. Each text is cached on its own, so a gold rationale that is
+    compared against every test item is embedded once.
+
+    No task prefix by default: nomic-embed-text was trained with prefixes like "clustering: ", but on
+    the sample's rationales none of them separated same-symptom from other-symptom pairs as well as
+    no prefix did. See the decision log.
+    """
+    vectors, missing = {}, []
+    for text in dict.fromkeys(texts):
+        cached = _cache_path(cache_dir, {"model": model, "prefix": prefix, "text": text})
+        if cached and cached.exists():
+            vectors[text] = json.loads(cached.read_text())
+        else:
+            missing.append(text)
+
+    for start in range(0, len(missing), batch):
+        chunk = missing[start:start + batch]
+        reply = post(EMBED_URL, {"model": model, "input": [prefix + t for t in chunk]})
+        for text, vector in zip(chunk, reply["embeddings"]):
+            vectors[text] = vector
+            cached = _cache_path(cache_dir, {"model": model, "prefix": prefix, "text": text})
+            if cached:
+                cached.parent.mkdir(parents=True, exist_ok=True)
+                cached.write_text(json.dumps(vector))
+    return [vectors[t] for t in texts]
 
 
 def repair(prompt, reason):

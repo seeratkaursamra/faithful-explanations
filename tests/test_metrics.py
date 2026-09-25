@@ -2,10 +2,10 @@ import math
 
 import pytest
 
-from src.metrics import (bootstrap_ci, cliffs_delta, comprehensiveness, cosine, did_ci, holm,
+from src.metrics import (bootstrap_ci, cliffs_delta, comprehensiveness, cosine, did_ci, holm, mean_similarity,
                          jaccard, mann_whitney_p, paired_diff_ci, precision_at_k,
                          precision_recall_f1, rank_agreement, sentence_scores, sufficiency, top_k,
-                         unpaired_diff_ci, wilcoxon_p)
+                         symptom_null, unpaired_diff_ci, wilcoxon_p)
 
 
 def test_jaccard():
@@ -190,3 +190,17 @@ def test_holm_steps_down_and_stays_monotone():
     # n=3: 3*0.01=0.03, then 2*0.03=0.06, then 1*0.04 is smaller so the running max holds at 0.06
     assert holm([0.01, 0.04, 0.03]) == pytest.approx([0.03, 0.06, 0.06])
     assert holm([0.5, 0.5]) == pytest.approx([1.0, 1.0])
+
+
+def test_mean_similarity():
+    # identical to one reference, orthogonal to the other: mean cosine 0.5
+    assert mean_similarity([1, 0], [[1, 0], [0, 1]]) == pytest.approx(0.5)
+    assert mean_similarity([1, 0], [[2, 0], [3, 0]]) == pytest.approx(1.0)   # length does not matter
+    assert math.isnan(mean_similarity([1, 0], []))
+
+
+def test_symptom_null_pools_every_other_symptom():
+    refs = {"A": [[1, 0]], "B": [[0, 1]], "C": [[0, 1], [1, 0]]}
+    # for A, the others pooled are B's one vector and C's two: cosines 0, 0, 1
+    assert symptom_null([1, 0], refs, "A") == pytest.approx(1 / 3)
+    assert math.isnan(symptom_null([1, 0], {"A": [[1, 0]]}, "A"))

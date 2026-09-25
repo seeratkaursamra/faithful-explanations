@@ -84,6 +84,24 @@ def gold(ann, post_id, symptom):
     return ann[(ann["post_id"] == post_id) & (ann["DSM5_symptom"] == symptom) & (ann["status"] == 1)]
 
 
+def gold_text(ann, post_id, symptom):
+    """G_text: the psychologist's explanations for one (post, symptom), joined in sentence order."""
+    rows = gold(ann, post_id, symptom).sort_values("sentence_index")
+    return " ".join(e.strip() for e in rows["explanation"] if isinstance(e, str))
+
+
+def references(ann, post_ids):
+    """Every G_text per symptom over the given posts. Pass training post ids only, so no test post
+    ever ends up in the set it is compared against."""
+    pos = ann[(ann["status"] == 1) & ann["post_id"].isin(set(post_ids)) & ann["DSM5_symptom"].isin(SYMPTOMS)]
+    out = {}
+    for (post_id, symptom), _ in pos.groupby(["post_id", "DSM5_symptom"], sort=True):
+        text = gold_text(ann, post_id, symptom)
+        if text:
+            out.setdefault(symptom, []).append(text)
+    return out
+
+
 def symptom_counts(posts):
     counts = {}
     for labs in posts["labels"]:

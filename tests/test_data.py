@@ -2,7 +2,10 @@ import math
 import shutil
 from pathlib import Path
 
-from src.data import NO_SYMPTOMS, SYMPTOMS, binarizer, check_against_paper, gold, load, split, symptom_counts
+import pandas as pd
+
+from src.data import (NO_SYMPTOMS, SYMPTOMS, binarizer, check_against_paper, gold, gold_text, load, references,
+                      split, symptom_counts)
 
 
 def test_labels_are_status_1_symptoms_only():
@@ -64,3 +67,30 @@ def test_sample_true_ignores_the_real_files(tmp_path):
         "fake_1,fake_1_0,I cannot sleep.,SLEEP_ISSUES,1,says so\n")
     assert list(load(tmp_path)[0].post_id) == ["fake_1"]
     assert list(load(tmp_path, sample=True)[0].post_id) == list(load("data", sample=True)[0].post_id)
+
+
+def _annotations(rows):
+    return pd.DataFrame(rows, columns=["post_id", "sentence_index", "DSM5_symptom", "status", "explanation"])
+
+
+def test_gold_text_joins_evidence_in_sentence_order():
+    ann = _annotations([
+        ("p1", 4, "SLEEP_ISSUES", 1, "Second."),
+        ("p1", 1, "SLEEP_ISSUES", 1, "First."),
+        ("p1", 2, "SLEEP_ISSUES", 0, "Rejected, so left out."),
+        ("p1", 3, "FATIGUE", 1, "Other symptom, left out."),
+    ])
+    assert gold_text(ann, "p1", "SLEEP_ISSUES") == "First. Second."
+    assert gold_text(ann, "p1", "ANHEDONIA") == ""
+
+
+def test_references_only_use_the_posts_given():
+    ann = _annotations([
+        ("train1", 0, "FATIGUE", 1, "Tired."),
+        ("train2", 0, "FATIGUE", 1, "Exhausted."),
+        ("train2", 1, "SLEEP_ISSUES", 1, "No sleep."),
+        ("test1", 0, "FATIGUE", 1, "Test post, must not appear."),
+        ("train1", 1, "ANHEDONIA", 0, "Rejected, must not appear."),
+    ])
+    assert references(ann, ["train1", "train2"]) == {"FATIGUE": ["Tired.", "Exhausted."],
+                                                     "SLEEP_ISSUES": ["No sleep."]}

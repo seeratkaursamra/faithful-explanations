@@ -1,6 +1,6 @@
 import json
 
-from src.llm import ask, parse, repair, unwrap
+from src.llm import ask, embed, parse, repair, unwrap
 
 GOOD = json.dumps({"symptoms": [
     {"label": "SLEEP_ISSUES", "evidence": [0, 2], "rationale": "says so", "confidence": 90},
@@ -103,3 +103,34 @@ def test_ask_gives_up_and_says_why():
     assert result["reason"] == "unknown label 'Nope'"
     assert result["attempts"] == 2
     assert result["raw"] is not None
+
+
+def fake_embedder(calls):
+    """Stands in for Ollama: the vector for a text is [its length, 1], and every request is recorded."""
+    def post(url, body):
+        calls.append(body)
+        return {"embeddings": [[len(t), 1] for t in body["input"]]}
+    return post
+
+
+def test_embed_keeps_order_and_duplicates(tmp_path):
+    calls = []
+    out = embed(["ab", "c", "ab"], cache_dir=tmp_path, post=fake_embedder(calls))
+    assert out == [[2, 1], [1, 1], [2, 1]]
+    assert calls[0]["input"] == ["ab", "c"]          # the duplicate is only sent once
+
+
+def test_embed_caches_each_text(tmp_path):
+    calls = []
+    embed(["ab", "c"], cache_dir=tmp_path, post=fake_embedder(calls))
+    assert embed(["c", "ab", "new"], cache_dir=tmp_path, post=fake_embedder(calls)) == [[1, 1], [2, 1], [3, 1]]
+    assert [c["input"] for c in calls] == [["ab", "c"], ["new"]]
+
+
+def test_embed_batches_and_applies_the_prefix(tmp_path):
+    calls = []
+    embed(["a", "b", "c"], prefix="clustering: ", batch=2, cache_dir=tmp_path, post=fake_embedder(calls))
+    assert [c["input"] for c in calls] == [["clustering: a", "clustering: b"], ["clustering: c"]]
+    # a different prefix is a different cache entry, not a hit
+    embed(["a"], cache_dir=tmp_path, post=fake_embedder(calls))
+    assert calls[-1]["input"] == ["a"]

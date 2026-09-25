@@ -56,6 +56,21 @@ def cosine(u, v):
     return float(u @ v / denom) if denom else 0.0
 
 
+def mean_similarity(vector, references):
+    """Mean cosine between one vector and a set of vectors. Plausibility, when the references are
+    the same symptom's gold rationales from the training posts."""
+    if not len(references):
+        return float("nan")
+    return float(np.mean([cosine(vector, r) for r in references]))
+
+
+def symptom_null(vector, references_by_symptom, symptom):
+    """The same mean similarity against every other symptom's references, pooled. A rationale that
+    is no closer to its own symptom than to this is reading generic clinical language."""
+    others = [r for s, refs in references_by_symptom.items() if s != symptom for r in refs]
+    return mean_similarity(vector, others)
+
+
 def rank_agreement(scores_a, scores_b):
     """Spearman correlation between two sentence-score dicts over their shared sentence ids."""
     ids = sorted(set(scores_a) & set(scores_b))
