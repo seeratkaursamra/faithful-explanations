@@ -170,7 +170,9 @@ def main():
     cfg = yaml.safe_load(Path(args.config).read_text())
     seeds = args.seeds or [args.seed if args.seed is not None else cfg.get("seed", 0)]
     results = [run(cfg, s) for s in seeds]
-    summarise(results, Path(cfg["out_dir"]) / "summary.json")
+    # one seed has its own metrics.json; writing summary.json here would overwrite the five-seed one
+    if len(results) > 1:
+        summarise(results, Path(cfg["out_dir"]) / "summary.json")
 
 
 if __name__ == "__main__":
