@@ -3,6 +3,7 @@ data/redsm5_posts.csv
 data/redsm5_annotations.csv
 
 venv/
+figures/
 __pycache__/
 .DS_Store
 outputs/

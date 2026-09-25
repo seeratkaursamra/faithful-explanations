@@ -11,3 +11,5 @@ seed: 0
 save_checkpoint: true
 # refuse to train unless the data matches the paper's counts (false only for the public sample)
 require_paper_match: true
+# leave unset to pick CUDA, then the Apple GPU, then CPU; set to cpu to force a comparison run
+device:

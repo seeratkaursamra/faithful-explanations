@@ -1,4 +1,4 @@
-.PHONY: test inspect inspect-sample baseline baseline5 clean
+.PHONY: test inspect inspect-sample baseline baseline5 figures clean
 
 test:
 	python -m pytest -q tests
@@ -9,6 +9,9 @@ inspect:
 # same thing on the public 25-row sample, where a mismatch with the paper is expected
 inspect-sample:
 	python -m src.inspect_data --data data --allow-mismatch --reading-sample docs/reading_sample.md
+
+figures:
+	python -m src.figures
 
 clean:
 	rm -rf outputs/* docs/reading_sample.md

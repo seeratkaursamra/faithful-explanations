@@ -19,11 +19,24 @@ from transformers import BertForSequenceClassification, BertTokenizer
 from .data import binarizer, check_against_paper, load, split
 
 
+def pick_device(requested=None):
+    """CUDA, else Apple GPU, else CPU. The recipe is unchanged; only where it runs differs."""
+    if requested:
+        return torch.device(requested)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
 
 
 class TextDataset(Dataset):
@@ -66,7 +79,7 @@ def metrics(y_true, probs, classes, threshold):
 
 def run(cfg, seed):
     set_seed(seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = pick_device(cfg.get("device"))
     out_dir = Path(cfg["out_dir"]) / f"seed{seed}"
     out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -26,6 +26,7 @@ make inspect          # full data: checks counts against the paper, writes docs/
 make inspect-sample   # same on the public sample; the mismatch with the paper is expected
 make baseline         # one seed of the ReDSM5 BERT baseline
 make baseline5        # five seeds + summary; target micro-F1 0.51 +/- 0.02
+make figures          # regenerate figures/ (git-ignored)
 ```
 
 Generated files go in `outputs/`. My notes from reading posts by hand are in `docs/observations.md`,
