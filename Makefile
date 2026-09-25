@@ -1,4 +1,4 @@
-.PHONY: test inspect inspect-sample baseline baseline5 figures clean
+.PHONY: test inspect inspect-sample baseline baseline5 m1 figures clean
 
 test:
 	python -m pytest -q tests
@@ -21,3 +21,7 @@ baseline:
 
 baseline5:
 	python -m src.train_bert --config configs/bert_baseline.yaml --seeds 0 1 2 3 4
+
+# needs data/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt, downloaded by hand
+m1:
+	python -m src.m1

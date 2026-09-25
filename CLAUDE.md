@@ -25,8 +25,8 @@ logged, not a quiet change.
 ->  3 evaluation harness (pre-register first)  ->  4 analysis + writeup.
 
 Built so far: data layer, sentence segmentation + gold alignment, metrics, BERT baseline, LIME over
-sentences, Ollama client, pipeline figure. Not yet written: Integrated Gradients, M1 linear model,
-the per-(post, symptom) harness that ties models to metrics. The full dataset has not arrived, so
+sentences, Integrated Gradients, lexicon markers, Ollama client with embeddings, pipeline figure.
+M1 linear model. Not yet written: the per-(post, symptom) harness that ties models to metrics. The full dataset has not arrived, so
 nothing has been run on real data yet.
 
 ## Code map
@@ -44,6 +44,12 @@ nothing has been run on real data yet.
 - `src/llm.py` - Ollama client. `parse` validates every reply (taxonomy, evidence indices in range,
   no duplicate or contradictory labels); `ask` retries a malformed reply with the reason appended and
   the temperature raised. Calls are cached on disk under `outputs/llm_cache`.
+- `src/attribution.py` - Integrated Gradients by hand over the word embeddings, [CLS]/[SEP] kept in the
+  baseline, completeness gap returned; `explain` goes straight to sentence scores. Matched to Captum.
+- `src/lexicon.py` - first person, negative affect (NRC fear+anger+sadness, file licensed and gitignored),
+  absolutist words, present-tense share of finite verbs. Features for M1 and the marker-density check.
+- `src/m1.py` - one logistic regression per label on TF-IDF 1-2 grams ("I" kept) + the four markers.
+  `explain` gives each sentence its exact share of the logit; markers, boundary bigrams and bias apart.
 - `src/train_bert.py` - the baseline, hyperparameters from the config, seeds and device handling.
 - `src/inspect_data.py`, `src/figures.py` - stats + hand-reading batch, and the pipeline figure.
 - `configs/bert_baseline.yaml`, `configs/prompts.yaml` - training recipe and the M3 prompts
@@ -65,10 +71,11 @@ nothing has been run on real data yet.
 ## Commands
 ```bash
 python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
-python -c "import nltk; nltk.download('punkt_tab')"        # sentence splitter data
+python -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')"
 make test                                                  # pytest over tests/
 make inspect | inspect-sample                              # full data | public sample
 make baseline | baseline5                                  # one seed | five seeds + summary.json
+make m1                                                    # M1; needs the NRC file in data/
 make figures                                               # regenerate figures/ (gitignored)
 python -m pytest tests/test_metrics.py::test_jaccard -q     # a single test
 ```
