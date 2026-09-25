@@ -9,6 +9,7 @@ Input is JSONL, one record per (model, post, symptom) that the model or the gold
   attribution                   {"IG": {sentence: score}, "LIME": {...}}; any subset, may be empty
   comprehensiveness             probability drop in 0-1 when stated_evidence is removed, or null
   sufficiency                   probability drop in 0-1 when only stated_evidence is kept, or null
+  ig_delta, lime_r2             optional: IG's completeness gap and LIME's local R-squared, reported as-is
 Sentence indices refer to src.sentences.split of the post. M3's 0-100 confidence is divided by 100
 before it gets here, so every model's erasure numbers share one scale.
 """
@@ -69,6 +70,10 @@ def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=
     row = {"model": record["model"], "post_id": record["post_id"], "symptom": record["symptom"],
            "correctness": kind, "n_gold": len(g_evid), "n_stated": len(s_evid) if stated is not None else np.nan,
            "comprehensiveness": record.get("comprehensiveness"), "sufficiency": record.get("sufficiency")}
+    # how far to trust the attributions themselves: IG's completeness gap, LIME's local fit
+    for quality in ("ig_delta", "lime_r2"):
+        if record.get(quality) is not None:
+            row[quality] = record[quality]
 
     rationale = record.get("stated_rationale")
     if rationale:

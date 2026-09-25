@@ -1,0 +1,7 @@
+# Attribution settings. LIME's sample count is from the decision log (100 matched a 1,000-sample reference).
+lime:
+  n_samples: 100
+  seed: 0
+ig:
+  steps: 50
+  batch: 10

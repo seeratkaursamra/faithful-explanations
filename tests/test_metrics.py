@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from src.metrics import (bootstrap_ci, cliffs_delta, comprehensiveness, cosine, did_ci, holm, mean_similarity,
+from src.metrics import (bootstrap_ci, cliffs_delta, comprehensiveness, cosine, did_ci, erasure, holm, mean_similarity,
                          jaccard, mann_whitney_p, paired_diff_ci, precision_at_k,
                          precision_recall_f1, rank_agreement, sentence_scores, sufficiency, top_k,
                          symptom_null, unpaired_diff_ci, wilcoxon_p)
@@ -213,3 +213,13 @@ def test_symptom_null_pools_every_other_symptom():
     # for A, the others pooled are B's one vector and C's two: cosines 0, 0, 1
     assert symptom_null([1, 0], refs, "A") == pytest.approx(1 / 3)
     assert math.isnan(symptom_null([1, 0], {"A": [[1, 0]]}, "A"))
+
+
+def test_erasure_with_any_predict_function():
+    # a model that is sure exactly when the sleep sentence is present
+    predict = lambda kept: 0.9 if "I cannot sleep." in kept else 0.2
+    sentences = ["I cannot sleep.", "The weather is fine."]
+    assert erasure(sentences, {0}, 0.9, predict) == (pytest.approx(0.7), pytest.approx(0.0))
+    assert erasure(sentences, set(), 0.9, predict) == (None, None)
+    assert erasure(sentences, {0, 1}, 0.9, predict)[0] is None        # nothing would be left
+    assert erasure(sentences, {0}, 0.9, lambda kept: None) == (None, None)

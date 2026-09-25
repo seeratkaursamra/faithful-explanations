@@ -10,7 +10,7 @@ import yaml
 
 from .data import NO_SYMPTOMS, check_against_paper, load, split
 from .llm import ask
-from .metrics import jaccard
+from .metrics import erasure, jaccard
 from .sentences import split as split_sentences
 from .sentences import texts
 
@@ -36,22 +36,6 @@ def confidence(result, label):
     return 0.0
 
 
-def erasure(sentences, evidence, label, p_full, prompts, ask_fn):
-    """(comprehensiveness, sufficiency) for one label, both through the joint prompt.
-
-    Undefined (None) when the model cited nothing, since removing nothing tests nothing, and
-    comprehensiveness is undefined when the evidence is the whole post, since nothing would be left.
-    """
-    if p_full is None or not evidence:
-        return None, None
-    without = [s for i, s in enumerate(sentences) if i not in evidence]
-    only = [s for i, s in enumerate(sentences) if i in evidence]
-    p_without = confidence(answer(without, prompts, ask_fn), label) if without else None
-    p_only = confidence(answer(only, prompts, ask_fn), label)
-    return (None if p_without is None else p_full - p_without,
-            None if p_only is None else p_full - p_only)
-
-
 def post_records(post_id, text, gold_labels, prompts, ask_fn):
     """Harness records for one post: every symptom predicted or gold. Also returns the joint result,
     so the caller can count parse failures and retries."""
@@ -69,7 +53,8 @@ def post_records(post_id, text, gold_labels, prompts, ask_fn):
         if s is not None:
             p_full = None if s["confidence"] is None else s["confidence"] / 100
             record["comprehensiveness"], record["sufficiency"] = erasure(
-                sentences, set(s["evidence"]), label, p_full, prompts, ask_fn)
+                sentences, set(s["evidence"]), p_full,
+                lambda kept, label=label: confidence(answer(kept, prompts, ask_fn), label))
             record.update(stated_evidence=s["evidence"], stated_rationale=s["rationale"] or None,
                           confidence=p_full)
         records.append(record)

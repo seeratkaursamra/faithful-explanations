@@ -50,6 +50,23 @@ def sufficiency(p_full, p_rationale_only):
     return p_full - p_rationale_only
 
 
+def erasure(sentences, evidence, p_full, predict):
+    """(comprehensiveness, sufficiency) for one label. `predict` takes a list of sentences and returns
+    the model's probability for the label, or None when it cannot say (an LLM reply that failed).
+
+    Undefined (None) when nothing was cited, since removing nothing tests nothing, and
+    comprehensiveness is undefined when the evidence is the whole post, since nothing would be left.
+    """
+    if p_full is None or not evidence:
+        return None, None
+    without = [s for i, s in enumerate(sentences) if i not in evidence]
+    only = [s for i, s in enumerate(sentences) if i in evidence]
+    p_without = predict(without) if without else None
+    p_only = predict(only)
+    return (None if p_without is None else comprehensiveness(p_full, p_without),
+            None if p_only is None else sufficiency(p_full, p_only))
+
+
 def cosine(u, v):
     u, v = np.asarray(u, dtype=float), np.asarray(v, dtype=float)
     denom = np.linalg.norm(u) * np.linalg.norm(v)

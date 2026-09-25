@@ -245,3 +245,9 @@ def test_h3_computes_per_symptom_and_orders_by_training_frequency():
     assert by["SUICIDAL_THOUGHTS"]["did"][0] == pytest.approx(0.1, abs=0.02)
     assert [r["symptom"] for r in out["by_symptom"][:2]] == ["SUICIDAL_THOUGHTS", "COGNITIVE_ISSUES"]
     assert out["verdict"] == "supported, on COGNITIVE_ISSUES"
+
+
+def test_attribution_quality_is_carried_through():
+    row = score(record(ig_delta=0.003, lime_r2=0.91), {0}, "", {}, {})
+    assert (row["ig_delta"], row["lime_r2"]) == (0.003, 0.91)
+    assert "ig_delta" not in score(record(), {0}, "", {}, {})

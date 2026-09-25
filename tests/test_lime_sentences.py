@@ -79,3 +79,15 @@ def test_same_seed_gives_the_same_answer():
 def test_edge_cases():
     assert explain([], driven_by(0))[0] == {}
     assert explain(["only one"], lambda s: [0.5] * len(s))[0] == {0: 1.0}
+
+
+def test_unscored_perturbations_are_dropped_not_zeroed():
+    # every third reply fails; the fit should still find sentence 2, and a 0 would have dragged it
+    base = driven_by(2)
+
+    def flaky(samples):
+        return [None if i % 3 == 1 else p for i, p in enumerate(base(samples))]
+
+    weights, r2 = explain(SENTENCES, flaky, n_samples=200)
+    assert max(weights, key=weights.get) == 2 and r2 > 0.95
+    assert explain(SENTENCES, lambda s: [None] * len(s), n_samples=20) == ({}, pytest.approx(float("nan"), nan_ok=True))

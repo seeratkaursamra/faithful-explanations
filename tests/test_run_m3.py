@@ -2,7 +2,8 @@ import re
 
 import pytest
 
-from src.run_m3 import confidence, erasure, post_records, stability
+from src.metrics import erasure
+from src.run_m3 import answer, confidence, post_records, stability
 
 PROMPTS = {"system": "s", "joint": "Post:\n{numbered_post}\nAnswer."}
 
@@ -24,6 +25,11 @@ def fake_ask(seen=None, confidence_value=90):
     return ask
 
 
+def sleep_confidence(ask_fn):
+    """The M3 predict function erasure is given: the joint prompt's confidence in SLEEP_ISSUES."""
+    return lambda kept: confidence(answer(kept, PROMPTS, ask_fn), "SLEEP_ISSUES")
+
+
 def test_confidence_reads_the_label_or_zero():
     result = {"ok": True, "symptoms": [{"label": "FATIGUE", "confidence": 70}]}
     assert confidence(result, "FATIGUE") == pytest.approx(0.7)
@@ -35,7 +41,7 @@ def test_confidence_reads_the_label_or_zero():
 def test_erasure_removes_then_keeps_only_the_evidence():
     seen = []
     sentences = ["I cannot sleep.", "The weather is fine.", "Dinner was nice."]
-    comp, suff = erasure(sentences, {0}, "SLEEP_ISSUES", 0.9, PROMPTS, fake_ask(seen))
+    comp, suff = erasure(sentences, {0}, 0.9, sleep_confidence(fake_ask(seen)))
     assert seen == [["The weather is fine.", "Dinner was nice."], ["I cannot sleep."]]
     assert comp == pytest.approx(0.9)        # without the evidence the label disappears: 0.9 - 0
     assert suff == pytest.approx(0.0)        # the evidence alone keeps it at 0.9
@@ -43,8 +49,8 @@ def test_erasure_removes_then_keeps_only_the_evidence():
 
 def test_erasure_is_undefined_when_nothing_is_cited_or_nothing_would_remain():
     sentences = ["I cannot sleep.", "Weather."]
-    assert erasure(sentences, set(), "SLEEP_ISSUES", 0.9, PROMPTS, fake_ask()) == (None, None)
-    comp, suff = erasure(["I cannot sleep."], {0}, "SLEEP_ISSUES", 0.9, PROMPTS, fake_ask())
+    assert erasure(sentences, set(), 0.9, sleep_confidence(fake_ask())) == (None, None)
+    comp, suff = erasure(["I cannot sleep."], {0}, 0.9, sleep_confidence(fake_ask()))
     assert comp is None and suff == pytest.approx(0.0)
 
 

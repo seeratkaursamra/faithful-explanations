@@ -34,7 +34,12 @@ def explain(sentences, predict, n_samples=200, width=0.25, alpha=1.0, seed=0):
     rng = np.random.default_rng(seed)
     kept = masks(n, n_samples, rng)
     samples = [[s for s, keep in zip(sentences, row) if keep] for row in kept]
-    probs = np.asarray(predict(samples), dtype=float)
+    # an LLM reply that failed to parse comes back as None; that perturbation is dropped, not scored 0
+    probs = np.array([np.nan if p is None else p for p in predict(samples)], dtype=float)
+    scored = np.isfinite(probs)
+    if scored.sum() < 2:
+        return {}, float("nan")
+    kept, probs = kept[scored], probs[scored]
 
     # Posts that lost more sentences sit further from the original and count for less.
     dropped = 1 - kept.mean(axis=1)
