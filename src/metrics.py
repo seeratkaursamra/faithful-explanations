@@ -30,7 +30,11 @@ def top_k(scores, k):
 
 
 def precision_at_k(scores, relevant, k):
-    """Share of the top-k attributed sentences that the model (or the expert) actually cited."""
+    """Share of the top-k attributed sentences that the model (or the expert) actually cited.
+
+    A post shorter than k can only return that many, so divide by what was returned, not by k.
+    """
+    k = min(k, len(scores))
     if k == 0:
         return 0.0
     return len(top_k(scores, k) & set(relevant)) / k
@@ -62,9 +66,14 @@ def rank_agreement(scores_a, scores_b):
 
 
 def sentence_scores(token_scores, token_sentence, normalise=True):
-    """Aggregate token attributions to sentences: sum of positive scores, divided by length if normalise."""
+    """Aggregate token attributions to sentences: sum of positive scores, divided by length if normalise.
+
+    Special tokens carry sentence id -1 and are dropped, or [CLS] could rank as a sentence.
+    """
     total, length = {}, {}
     for score, sid in zip(token_scores, token_sentence):
+        if sid < 0:
+            continue
         total[sid] = total.get(sid, 0.0) + max(score, 0.0)
         length[sid] = length.get(sid, 0) + 1
     return {sid: total[sid] / length[sid] if normalise else total[sid] for sid in total}

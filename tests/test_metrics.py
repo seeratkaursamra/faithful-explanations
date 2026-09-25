@@ -41,6 +41,13 @@ def test_precision_at_k():
     assert precision_at_k(scores, {"s1"}, 0) == 0.0
 
 
+def test_precision_at_k_on_a_post_shorter_than_k():
+    # two sentences, both cited: k=3 can only ever return two, so a perfect answer is still 1.0
+    assert precision_at_k({0: 0.9, 1: 0.8}, {0, 1}, 3) == 1.0
+    assert precision_at_k({0: 0.9, 1: 0.8}, {0}, 3) == pytest.approx(0.5)
+    assert precision_at_k({}, {0}, 2) == 0.0
+
+
 def test_comprehensiveness_and_sufficiency_signs():
     # rationale mattered: removing it drops 0.9 -> 0.3
     assert comprehensiveness(0.9, 0.3) == pytest.approx(0.6)
@@ -75,6 +82,13 @@ def test_sentence_scores_sums_positives_and_normalises():
     sents = [0, 0, 0, 1, 1]
     assert sentence_scores(tokens, sents, normalise=False) == {0: pytest.approx(1.0), 1: pytest.approx(0.4)}
     assert sentence_scores(tokens, sents, normalise=True) == {0: pytest.approx(1 / 3), 1: pytest.approx(0.2)}
+
+
+def test_sentence_scores_drops_special_tokens():
+    # token_sentences marks [CLS] and [SEP] as -1; a large score there must not become a "sentence"
+    scores = sentence_scores([0.9, 0.2, 0.1, 0.3, 0.7], [-1, 0, 0, 1, -1])
+    assert set(scores) == {0, 1}
+    assert top_k(scores, 1) == {1}
 
 
 def test_bootstrap_ci_brackets_the_mean():
