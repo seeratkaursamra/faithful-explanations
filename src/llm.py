@@ -22,11 +22,12 @@ def unwrap(text):
     return text[start:end + 1] if 0 <= start < end else text
 
 
-def parse(text, n_sentences=None):
+def parse(text, n_sentences=None, expected=None):
     """Return (symptoms, reason). symptoms is None when the reply fails a check, and reason says which.
 
     n_sentences, when given, is how many sentences the post was split into, so cited evidence
-    indices can be checked against the post the model was actually shown.
+    indices can be checked against the post the model was actually shown. expected, when given, is
+    the label set the decoupled control was told to explain; a reply that adds or drops one fails.
     """
     try:
         payload = json.loads(unwrap(text))
@@ -64,6 +65,8 @@ def parse(text, n_sentences=None):
         return None, "the same symptom appears twice"
     if NO_SYMPTOMS in labels and len(labels) > 1:
         return None, "NO_SYMPTOMS returned alongside symptoms"
+    if expected is not None and set(labels) != set(expected):
+        return None, f"it explained {sorted(labels)} but was asked to explain exactly {sorted(expected)}"
     return out, "ok"
 
 
@@ -143,7 +146,7 @@ def repair(prompt, reason):
 
 
 def ask(prompt, system, n_sentences=None, attempts=3, seed=0, temperature=0, retry_temperature=0.3,
-        call=generate, **kwargs):
+        expected=None, call=generate, **kwargs):
     """Call the model, parse the reply, and retry a malformed one.
 
     The first pass is temperature 0 and reproducible. Retrying is only useful if something
@@ -159,7 +162,7 @@ def ask(prompt, system, n_sentences=None, attempts=3, seed=0, temperature=0, ret
     for i in range(attempts):
         warmth = temperature if i == 0 else max(temperature, retry_temperature)
         raw = call(text, system, seed=seed, temperature=warmth, **kwargs)
-        symptoms, reason = parse(raw, n_sentences)
+        symptoms, reason = parse(raw, n_sentences, expected)
         if symptoms is not None:
             return {"ok": True, "symptoms": symptoms, "reason": "ok", "attempts": i + 1, "raw": raw}
         text = repair(prompt, reason)

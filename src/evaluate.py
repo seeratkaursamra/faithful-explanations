@@ -20,11 +20,12 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from .data import SYMPTOMS, gold, gold_text, load, references, split
+from .data import SYMPTOMS, gold, gold_text, load, references, split, symptom_counts
+from .lexicon import load_nrc, markers
 from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, did_ci, holm, jaccard, mann_whitney_p,
                       mean_similarity, precision_at_k, precision_recall_f1, rank_agreement, symptom_null, top_k,
                       unpaired_diff_ci)
-from .sentences import align
+from .sentences import align, texts
 from .sentences import split as split_sentences
 
 KIND = {(True, True): "TP", (True, False): "FP", (False, True): "FN", (False, False): "TN"}
@@ -32,6 +33,10 @@ KIND = {(True, True): "TP", (True, False): "FP", (False, True): "FN", (False, Fa
 # Prereg: H1 needs the plausibility gap to be small, and is inconclusive below 30 false positives.
 SMALL_PLAUSIBILITY_GAP = 0.05
 MIN_FALSE_POSITIVES = 30
+
+# Prereg H3: the gap should be wider for these than for suicidal thoughts.
+H3_TARGETS = ["PSYCHOMOTOR", "APPETITE_CHANGE", "COGNITIVE_ISSUES"]
+H3_REFERENCE = "SUICIDAL_THOUGHTS"
 
 # Bootstrap settings; the real values come from configs/evaluate.yaml, these match it.
 BOOT = {"n_resamples": 1000, "seed": 0}
@@ -42,9 +47,22 @@ def gold_evidence(ann, post_id, symptom, text, spans):
     return {align(s, text, spans)[0] for s in gold(ann, post_id, symptom)["sentence_text"]} - {-1}
 
 
-def score(record, g_evid, g_text, vectors, refs):
+def density(sentences, top, negative_words):
+    """Marker rates in the top sentences minus the rest. Each group's words are pooled, so a
+    one-word sentence cannot swing it. Empty when either group is empty."""
+    top = {i for i in top if i < len(sentences)}
+    rest = [s for i, s in enumerate(sentences) if i not in top]
+    if not top or not rest:
+        return {}
+    a = markers(" ".join(sentences[i] for i in sorted(top)), negative_words)
+    b = markers(" ".join(rest), negative_words)
+    return {k: a[k] - b[k] for k in a if not (np.isnan(a[k]) or np.isnan(b[k]))}
+
+
+def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=None):
     """Every per-item metric the pre-registration names. A metric that is undefined for this item
-    (no rationale, no gold, nothing cited) is left out of the row, never scored as 0."""
+    (no rationale, no gold, nothing cited) is left out of the row, never scored as 0.
+    Marker density (H4) needs the post's sentences and the NRC words; without them it is skipped."""
     kind = KIND[(bool(record["predicted"]), bool(record["gold"]))]
     stated = record.get("stated_evidence")
     s_evid = set(stated or [])
@@ -72,6 +90,9 @@ def score(record, g_evid, g_text, vectors, refs):
             row[f"{method}_stated_jaccard_k2"] = jaccard(top_k(scores, 2), s_evid)
         if kind == "TP" and g_evid:
             row[f"{method}_gold_jaccard"] = jaccard(top_k(scores, len(g_evid)), g_evid)
+        if sentences is not None and negative_words is not None:
+            for marker, diff in density(sentences, top_k(scores, 2), negative_words).items():
+                row[f"{method}_density_{marker}"] = diff
     if "IG" in attributions and "LIME" in attributions:
         row["ig_lime_jaccard"] = jaccard(top_k(attributions["IG"], 2), top_k(attributions["LIME"], 2))
         row["ig_lime_spearman"] = rank_agreement(attributions["IG"], attributions["LIME"])
@@ -79,11 +100,12 @@ def score(record, g_evid, g_text, vectors, refs):
 
 
 def compare(items, metric, boot=BOOT):
-    """TP against FP on one metric: both means with intervals, the gap, its test and effect size."""
+    """TP against FP on one metric: both means with intervals, the gap, its test and effect size.
+    Also the mean over TP and FP together, which is what H4's "higher than zero" question needs."""
     have = items[items[metric].notna()]
     tp, fp = have[have["correctness"] == "TP"], have[have["correctness"] == "FP"]
     row = {"metric": metric, "n_tp": len(tp), "n_fp": len(fp)}
-    for name, group in (("tp", tp), ("fp", fp)):
+    for name, group in (("all", pd.concat([tp, fp])), ("tp", tp), ("fp", fp)):
         if len(group):
             row[f"{name}_mean"], row[f"{name}_lo"], row[f"{name}_hi"] = bootstrap_ci(group[metric], posts=group["post_id"], **boot)
     if len(tp) and len(fp):
@@ -151,8 +173,46 @@ def verdict(did, plausibility_gap, faithfulness_gap):
     return "partial support: both degrade, faithfulness faster"
 
 
-def run(records, posts, ann, train_ids, embed, boot=BOOT):
-    """Score every record, then summarise. `embed` maps a list of texts to a list of vectors."""
+def h3(items, model, train_counts=None, faithfulness="comprehensiveness", boot=BOOT):
+    """The H1 difference in differences within each symptom, ordered by training frequency, and the
+    pre-registered H3 verdict. Low-support symptoms are reported but not argued from."""
+    m = items[items["model"] == model]
+    measured = {"plausibility", faithfulness} <= set(m.columns)
+    rows = []
+    for symptom in SYMPTOMS:
+        s = m[m["symptom"] == symptom]
+        support = int(s["correctness"].isin(["TP", "FN"]).sum())
+        have = s[s["plausibility"].notna() & s[faithfulness].notna()] if measured else s.iloc[:0]
+        tp, fp = have[have["correctness"] == "TP"], have[have["correctness"] == "FP"]
+        row = {"symptom": symptom, "train_count": (train_counts or {}).get(symptom, 0), "support": support,
+               "low_support": support < MIN_SUPPORT, "n_tp": len(tp), "n_fp": len(fp)}
+        if len(tp) and len(fp):
+            row["did"] = did_ci(tp["plausibility"], tp[faithfulness], fp["plausibility"], fp[faithfulness],
+                                posts_correct=tp["post_id"], posts_wrong=fp["post_id"], **boot)
+        rows.append(row)
+    rows.sort(key=lambda r: -r["train_count"])
+    return {"model": model, "faithfulness": faithfulness, "by_symptom": rows, "verdict": h3_verdict(rows)}
+
+
+def h3_verdict(rows):
+    """Supported if every usable target's DiD exceeds suicidal thoughts'. Usable means a DiD exists
+    and the symptom is not low-support."""
+    by = {r["symptom"]: r for r in rows}
+    usable = [s for s in H3_TARGETS + [H3_REFERENCE] if "did" in by.get(s, {}) and not by[s]["low_support"]]
+    if H3_REFERENCE not in usable:
+        return "inconclusive: suicidal thoughts has no difference in differences or too little support"
+    targets = [s for s in H3_TARGETS if s in usable]
+    if not targets:
+        return "inconclusive: none of psychomotor, appetite change, cognitive issues is usable"
+    reference = by[H3_REFERENCE]["did"][0]
+    if all(by[s]["did"][0] > reference for s in targets):
+        return f"supported, on {', '.join(targets)}"
+    return f"refuted, on {', '.join(targets)}"
+
+
+def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None):
+    """Score every record, then summarise. `embed` maps a list of texts to a list of vectors.
+    Returns the items, the summary table, and the H1 and H3 results per model."""
     text_by_id = dict(zip(posts["post_id"], posts["text"]))
     ref_texts = references(ann, train_ids)
     rows, needed, prepared = [], set(), []
@@ -160,17 +220,21 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT):
         text = text_by_id[record["post_id"]]
         spans = split_sentences(text)
         g_text = gold_text(ann, record["post_id"], record["symptom"])
-        prepared.append((record, gold_evidence(ann, record["post_id"], record["symptom"], text, spans), g_text))
+        prepared.append((record, gold_evidence(ann, record["post_id"], record["symptom"], text, spans), g_text,
+                         texts(text, spans)))
         needed |= {t for t in (record.get("stated_rationale"), g_text) if t}
 
     needed = sorted(needed)
     vectors = dict(zip(needed, embed(needed))) if needed else {}
     refs = {s: embed(ts) for s, ts in ref_texts.items()}
-    for record, g_evid, g_text in prepared:
-        rows.append(score(record, g_evid, g_text, vectors, refs))
+    for record, g_evid, g_text, sentences in prepared:
+        rows.append(score(record, g_evid, g_text, vectors, refs, sentences, negative_words))
     items = pd.DataFrame(rows)
     models = sorted(items["model"].unique())
-    return items, summarise(items, boot), [h1(items, m, boot=boot) for m in models if "plausibility" in items]
+    train_counts = symptom_counts(posts[posts["post_id"].isin(set(train_ids))]) if "labels" in posts else None
+    hypotheses = {"H1": [h1(items, m, boot=boot) for m in models if "plausibility" in items],
+                  "H3": [h3(items, m, train_counts, boot=boot) for m in models if "plausibility" in items]}
+    return items, summarise(items, boot), hypotheses
 
 
 def main():
@@ -181,21 +245,23 @@ def main():
     ap.add_argument("--data", default="data")
     ap.add_argument("--out", default="outputs/metrics")
     ap.add_argument("--config", default="configs/evaluate.yaml")
+    ap.add_argument("--nrc", default="data/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt")
     args = ap.parse_args()
     boot = yaml.safe_load(Path(args.config).read_text())["bootstrap"]
 
     posts, ann = load(args.data)
     train, _ = split(posts)
     records = [json.loads(line) for path in args.records for line in Path(path).read_text().splitlines() if line]
-    items, summary, hypothesis = run(records, posts, ann, train["post_id"], embed, boot)
+    items, summary, hypotheses = run(records, posts, ann, train["post_id"], embed, boot, load_nrc(args.nrc))
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     items.to_csv(out / "items.csv", index=False)
     summary.to_csv(out / "summary.csv", index=False)
-    (out / "h1.json").write_text(json.dumps(hypothesis, indent=2, default=float))
-    for h in hypothesis:
-        print(f"{h['model']}: {h['verdict']}")
+    (out / "hypotheses.json").write_text(json.dumps(hypotheses, indent=2, default=float))
+    for name, results in hypotheses.items():
+        for h in results:
+            print(f"{name} {h['model']}: {h['verdict']}")
 
 
 if __name__ == "__main__":

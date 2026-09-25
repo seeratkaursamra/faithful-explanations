@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.evaluate import compare, gold_evidence, h1, run, score, summarise, verdict
+from src.evaluate import compare, density, gold_evidence, h1, h3, h3_verdict, run, score, summarise, verdict
 from src.sentences import split
 
 TEXT = "I cannot sleep. The weather is fine. I lie awake all night."
@@ -155,14 +155,15 @@ def test_run_end_to_end_on_a_toy_dataset():
         calls.append(list(texts))
         return [[1.0, float(len(t) % 3)] for t in texts]
 
-    items, summary, hypothesis = run(records, posts, ann, train_ids=["tr"], embed=embed)
+    items, summary, hypotheses = run(records, posts, ann, train_ids=["tr"], embed=embed)
     assert list(items.correctness) == ["TP", "FP", "FN"]
     assert items.loc[0, "evidence_jaccard"] == pytest.approx(1 / 2)   # stated {0, 2}, gold {0}
     assert not np.isnan(items.loc[0, "plausibility"])                 # compared with the training post
     assert "sleep is poor" in calls[0] and "Reports never sleeping." not in calls[0]
     # the reference set is the training post's rationale only; p1's own gold must not be in it
     assert calls[1:] == [["Reports never sleeping."]]
-    assert hypothesis[0]["verdict"].startswith("inconclusive")          # 1 false positive
+    assert hypotheses["H1"][0]["verdict"].startswith("inconclusive")    # 1 false positive
+    assert hypotheses["H3"][0]["verdict"].startswith("inconclusive")
 
 
 def test_the_bootstrap_seed_reaches_every_interval():
@@ -179,3 +180,68 @@ def test_the_config_matches_the_code_defaults():
     import yaml
     from src.evaluate import BOOT
     assert yaml.safe_load(open("configs/evaluate.yaml"))["bootstrap"] == BOOT
+
+
+
+# --- H4: marker density ----------------------------------------------------------------------------
+
+def test_density_is_top_minus_rest_with_words_pooled():
+    sentences = ["I hate myself.", "The weather is nice today.", "Dinner was fine."]
+    d = density(sentences, {0}, negative_words={"hate"})
+    # top: I, hate, myself -> first person 2/3, negative 1/3; rest: 8 words, none of either
+    assert d["first_person"] == pytest.approx(2 / 3)
+    assert d["negative_affect"] == pytest.approx(1 / 3)
+    assert density(sentences, {0, 1, 2}, {"hate"}) == {}          # nothing left to compare with
+    assert density(sentences, {7}, {"hate"}) == {}                 # an index past the post is ignored
+
+
+def test_score_adds_density_only_when_it_has_the_sentences_and_words():
+    sentences = ["I cannot sleep.", "The weather is fine.", "I lie awake all night."]
+    rec = record(attribution={"M1": {"0": 0.9, "1": 0.0, "2": 0.5}})
+    row = score(rec, {0}, "", {}, {}, sentences=sentences, negative_words=set())
+    # top 2 by attribution is {0, 2}: 9 words (NLTK splits "cannot" into "can not") with two "I" = 2/9,
+    # against 4 words with none. Top 1 would give 1/4 - 1/9 instead.
+    assert row["M1_density_first_person"] == pytest.approx(2 / 9)
+    assert "M1_density_absolutist" in row
+    assert not any(k.startswith("M1_density") for k in score(rec, {0}, "", {}, {}))
+
+
+def test_compare_reports_the_mean_over_all_items():
+    row = compare(items_frame(3, 1, 0.8, 0.4), "x")
+    assert row["all_mean"] == pytest.approx((3 * 0.8 + 0.4) / 4)
+
+
+# --- H3 --------------------------------------------------------------------------------------------
+
+def h3_rows(**did):
+    """Rows as h3 builds them: every named symptom gets that DiD and enough support."""
+    return [{"symptom": s, "low_support": False, "did": (d, d - 0.1, d + 0.1)} for s, d in did.items()]
+
+
+def test_h3_verdict_rules():
+    assert h3_verdict(h3_rows(COGNITIVE_ISSUES=0.4, PSYCHOMOTOR=0.3, SUICIDAL_THOUGHTS=0.1)).startswith("supported")
+    assert h3_verdict(h3_rows(COGNITIVE_ISSUES=0.4, PSYCHOMOTOR=0.05, SUICIDAL_THOUGHTS=0.1)).startswith("refuted")
+    # the reference has to be usable
+    rows = h3_rows(COGNITIVE_ISSUES=0.4, SUICIDAL_THOUGHTS=0.1)
+    rows[1]["low_support"] = True
+    assert h3_verdict(rows).startswith("inconclusive")
+    # a low-support target is left out rather than argued from
+    rows = h3_rows(COGNITIVE_ISSUES=0.4, PSYCHOMOTOR=-1.0, SUICIDAL_THOUGHTS=0.1)
+    rows[1]["low_support"] = True
+    assert h3_verdict(rows) == "supported, on COGNITIVE_ISSUES"
+    assert h3_verdict(h3_rows(SUICIDAL_THOUGHTS=0.1)).startswith("inconclusive")
+
+
+def test_h3_computes_per_symptom_and_orders_by_training_frequency():
+    rng = np.random.default_rng(0)
+    frames = []
+    for symptom, faith_fp in [("COGNITIVE_ISSUES", 0.1), ("SUICIDAL_THOUGHTS", 0.5)]:
+        tp = items_frame(12, 0, 0, 0, symptom).assign(plausibility=0.8, comprehensiveness=0.6 + rng.normal(0, 0.01, 12))
+        fp = items_frame(0, 12, 0, 0, symptom).assign(plausibility=0.8, comprehensiveness=faith_fp + rng.normal(0, 0.01, 12))
+        frames += [tp.assign(post_id=tp.post_id + symptom), fp.assign(post_id=fp.post_id + symptom)]
+    out = h3(pd.concat(frames), "M3", train_counts={"SUICIDAL_THOUGHTS": 130, "COGNITIVE_ISSUES": 47})
+    by = {r["symptom"]: r for r in out["by_symptom"]}
+    assert by["COGNITIVE_ISSUES"]["did"][0] == pytest.approx(0.5, abs=0.02)
+    assert by["SUICIDAL_THOUGHTS"]["did"][0] == pytest.approx(0.1, abs=0.02)
+    assert [r["symptom"] for r in out["by_symptom"][:2]] == ["SUICIDAL_THOUGHTS", "COGNITIVE_ISSUES"]
+    assert out["verdict"] == "supported, on COGNITIVE_ISSUES"

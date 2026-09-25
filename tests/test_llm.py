@@ -145,3 +145,22 @@ def test_ask_first_pass_can_sample_for_stability_runs():
 
     ask("p", "s", n_sentences=5, temperature=0.5, retry_temperature=0.3, call=call)
     assert seen == [0.5, 0.5]            # a retry never cools below the first pass
+
+
+def test_the_decoupled_control_must_explain_exactly_the_labels_it_was_given():
+    assert parse(GOOD, expected=["SLEEP_ISSUES", "FATIGUE"])[1] == "ok"
+    assert "was asked to explain exactly" in parse(GOOD, expected=["SLEEP_ISSUES"])[1]     # added FATIGUE
+    assert "was asked to explain exactly" in parse(GOOD, expected=["SLEEP_ISSUES", "FATIGUE", "ANHEDONIA"])[1]
+
+
+def test_ask_retries_a_decoupled_reply_with_the_wrong_labels():
+    seen = []
+    only_sleep = json.dumps({"symptoms": [{"label": "SLEEP_ISSUES", "evidence": [0]}]})
+
+    def call(prompt, system, seed=0, temperature=0, **kw):
+        seen.append(prompt)
+        return GOOD if len(seen) == 1 else only_sleep
+
+    result = ask("p", "s", n_sentences=5, expected=["SLEEP_ISSUES"], call=call)
+    assert result["ok"] and result["attempts"] == 2
+    assert "was asked to explain exactly ['SLEEP_ISSUES']" in seen[1]

@@ -27,7 +27,7 @@ logged, not a quiet change.
 Built so far: data layer, sentence segmentation + gold alignment, metrics, BERT baseline, LIME over
 sentences, Integrated Gradients, lexicon markers, Ollama client with embeddings, pipeline figure.
 M1 linear model, the evaluation harness. Not yet written: the runners that produce the harness's
-input records for M2 (IG, decoupled control) and M1, and M3's LIME; per-symptom DiD for H3; marker density. The full dataset has not arrived, so
+input records for M2 (IG, decoupled control) and M1, and M3's LIME. The full dataset has not arrived, so
 nothing has been run on real data yet.
 
 ## Code map
@@ -52,8 +52,9 @@ nothing has been run on real data yet.
 - `src/m1.py` - one logistic regression per label on TF-IDF 1-2 grams ("I" kept) + the four markers.
   `explain` gives each sentence its exact share of the logit; markers, boundary bigrams and bias apart.
 - `src/evaluate.py` - the harness. Input is one JSONL record per (model, post, symptom), format in its
-  docstring. Scores every item, compares TP vs FP overall and per symptom, and applies the prereg's H1
-  decision rules as code (`verdict`). Undefined metrics are left out, never scored 0.
+  docstring. Scores every item, compares TP vs FP overall and per symptom, marker density for H4, and
+  applies the prereg's H1 and H3 decision rules as code (`verdict`, `h3_verdict`). Undefined metrics are
+  left out, never scored 0.
 - `src/run_m3.py` - M3 over the test split: the joint answer, then comprehensiveness and sufficiency through
   the same joint prompt, written as harness records with FNs included and a parse-failure log.
 - `src/train_bert.py` - the baseline, hyperparameters from the config, seeds and device handling.
