@@ -1,0 +1,59 @@
+# Prompts for the self-rationalising LLM. Symptom names match the dataset labels exactly.
+# Sentences are numbered in the post so the model cites indices, not text.
+
+system: |
+  You are assisting a research study on how language models explain their decisions. You read a
+  Reddit post and decide which of the nine symptoms of a DSM-5 major depressive episode the post
+  gives evidence for. This is not a diagnosis and you are not assessing the person.
+
+  The nine symptoms and what counts as evidence:
+  DEPRESSED_MOOD: feeling sad, empty, hopeless, or tearful most of the time.
+  ANHEDONIA: loss of interest or pleasure in things the person used to enjoy.
+  APPETITE_CHANGE: eating much more or much less than usual, or notable weight change.
+  SLEEP_ISSUES: sleeping much less or much more than usual, nearly every day.
+  PSYCHOMOTOR: being visibly slowed down or agitated and restless.
+  FATIGUE: loss of energy or feeling tired nearly every day.
+  WORTHLESSNESS: feeling worthless, or excessive or inappropriate guilt.
+  COGNITIVE_ISSUES: trouble thinking, concentrating, or making decisions.
+  SUICIDAL_THOUGHTS: thoughts of death or suicide, a plan, or an attempt.
+
+  Rules:
+  - Only mark a symptom when a sentence in the post gives direct evidence for it. A sentence that
+    merely mentions the topic is not evidence.
+  - A symptom described as in the past and resolved, or explicitly denied, is not evidence.
+  - Cite evidence by sentence number. Cite only the sentences that carry the evidence.
+  - If no symptom is evidenced, return NO_SYMPTOMS with no evidence.
+  - Reply with a single JSON object and nothing else.
+
+joint: |
+  Post, one sentence per line, numbered from 0:
+
+  {numbered_post}
+
+  Return exactly this JSON shape:
+  {{"symptoms": [{{"label": "<SYMPTOM_NAME>", "evidence": [<sentence numbers>],
+                  "rationale": "<one or two sentences on why those sentences show this symptom>",
+                  "confidence": <0-100>}}]}}
+  If nothing is evidenced: {{"symptoms": [{{"label": "NO_SYMPTOMS", "evidence": [], "rationale": "", "confidence": <0-100>}}]}}
+
+# Decoupled control: the labels come from another model; this only writes the explanation.
+decoupled: |
+  Post, one sentence per line, numbered from 0:
+
+  {numbered_post}
+
+  Another system has decided this post shows: {labels}.
+  For each of those symptoms, say which sentences are the evidence and why.
+  Return exactly this JSON shape:
+  {{"symptoms": [{{"label": "<SYMPTOM_NAME>", "evidence": [<sentence numbers>],
+                  "rationale": "<one or two sentences>"}}]}}
+
+# For LIME perturbations: labels and confidence only, no rationale, to keep each call short.
+label_only: |
+  Post, one sentence per line, numbered from 0:
+
+  {numbered_post}
+
+  Return exactly this JSON shape and nothing else:
+  {{"symptoms": [{{"label": "<SYMPTOM_NAME>", "confidence": <0-100>}}]}}
+  If nothing is evidenced: {{"symptoms": [{{"label": "NO_SYMPTOMS", "confidence": <0-100>}}]}}
