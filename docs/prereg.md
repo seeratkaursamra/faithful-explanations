@@ -40,7 +40,9 @@ One number, fixed in advance, on **M3 Condition A** (Qwen 2.5 7B Instruct, self-
 
 - **Plausibility**: cosine similarity between embeddings of S_text and G_text, nomic-embed-text.
   This is deliberately the measure ReDSM5 used to report 0.78, so the test speaks to their metric.
-- **Faithfulness**: ERASER comprehensiveness with R = S_evid.
+- **Faithfulness**: ERASER comprehensiveness with R = S_evid. The LLM reports confidence as a
+  0-100 integer and a probe on 2026-09-25 found it saturated at 0 or 100, so for M3 this is a
+  decision-flip rate rather than a probability drop. Stated here in advance, not discovered later.
 - **Primary statistic**: the difference in differences, `did_ci` in `src/metrics.py`. The
   faithfulness gap between correct and incorrect predictions, minus the plausibility gap, with a
   95% bootstrap interval over 1,000 resamples.
