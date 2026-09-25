@@ -12,3 +12,6 @@ docs/reading_sample.md
 # private notes
 docs/private/
 CLAUDE.local.md
+
+# NRC Emotion Lexicon, licensed for research, never committed
+data/NRC-Emotion-Lexicon*
