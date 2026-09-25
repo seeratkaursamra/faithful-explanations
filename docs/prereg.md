@@ -115,3 +115,47 @@ limitation and will be stated as one, not quietly dropped.
 Any departure from this document gets an entry in `docs/decision_log.md` with its date and reason,
 and is listed in the write-up. Exploratory analyses not named here are permitted and will be
 labelled exploratory.
+
+## Amendment 1, 2026-09-25
+
+Made after a review of the analysis code, still before any model has been run on ReDSM5 and before
+the dataset has arrived. The text above is left as first written; where it conflicts with this
+section, this section holds. Each change has an entry in `docs/decision_log.md`.
+
+**1. What plausibility is measured against.** As written, plausibility compares S_text with the
+post's own G_text. On a false positive the symptom has no status == 1 rows, so G_text does not exist
+and the plausibility half of the primary statistic could not be computed for incorrect predictions.
+Plausibility is now the mean cosine similarity between S_text and every G_text for the same symptom
+from the training split, computed identically for correct and incorrect predictions. Test posts
+never appear in the reference set. Comparing correct predictions with their own post but incorrect
+ones with other posts is ruled out, because own-post similarity is higher by construction and would
+build a plausibility gap into the measure. Similarity to the post's own G_text is kept as a secondary
+outcome on correct predictions only, since that is the comparison behind ReDSM5's 0.78.
+
+The null baseline changes with it: the same mean similarity, but against the training-split G_texts
+of the other eight symptoms. If a stated rationale is no closer to its own symptom's references than
+to other symptoms', the measure is reading generic clinical language rather than symptom content.
+
+**2. G_text when there are several evidence sentences.** ReDSM5 gives one explanation per evidence
+sentence. G_text for a (post, symptom) is those explanations joined in sentence order.
+
+**3. Resampling unit.** The analysis rules already say resamples are over posts. The implementation
+resampled (post, symptom) items, which treats several symptoms from one post as independent and
+narrows the intervals. Every bootstrap, `did_ci` included, now draws posts and takes all of a drawn
+post's items, so correct and incorrect items from the same post are resampled together.
+
+**4. Which prompt the erasure and LIME calls use on M3.** The joint prompt, the one that produced
+S_evid. A probe on the paraphrased sample found the joint and label-only prompts gave different label
+sets on 5 of 17 posts at temperature 0, so erasure or LIME run through the label-only prompt would
+measure a different decision from the one being explained. The model's output for a symptom is its
+joint-prompt confidence for that label, and 0 when the label is absent.
+
+**5. k for attribution overlap.** A_topk against S_evid uses k = |S_evid|, not k = |G_evid|. On a false
+positive |G_evid| is 0, so A-vs-S overlap would have been 0 on every incorrect prediction by
+construction, producing the faithfulness drop H1 predicts. k = |G_evid| is kept for A against G, on
+correct predictions only. Where the model cites no sentence, A-vs-S overlap is undefined: those items
+are counted and reported, not scored as 0. The k = 2 robustness check is unchanged.
+
+**6. Evidence overlap between S and G on incorrect predictions.** Evidence Jaccard and sentence
+precision, recall and F1 need G_evid, which is empty on a false positive. They are reported on
+correct predictions only.
