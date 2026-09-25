@@ -1,6 +1,6 @@
 import json
 
-from src.llm import ask, parse, unwrap
+from src.llm import ask, parse, repair, unwrap
 
 GOOD = json.dumps({"symptoms": [
     {"label": "SLEEP_ISSUES", "evidence": [0, 2], "rationale": "says so", "confidence": 90},
@@ -64,27 +64,36 @@ def test_contradictory_replies_are_rejected():
 
 
 def test_ask_returns_on_the_first_good_reply():
-    calls = []
+    seen = []
 
-    def call(prompt, system, seed=0, **kw):
-        calls.append(seed)
+    def call(prompt, system, seed=0, temperature=0, **kw):
+        seen.append((prompt, temperature))
         return GOOD
 
     result = ask("p", "s", n_sentences=5, call=call)
     assert result["ok"] and result["attempts"] == 1
-    assert calls == [0]
+    assert seen == [("p", 0)]        # the first pass is always deterministic
 
 
-def test_ask_retries_under_a_new_seed_and_recovers():
-    seeds = []
+def test_a_retry_says_what_was_wrong_and_warms_up():
+    seen = []
 
-    def call(prompt, system, seed=0, **kw):
-        seeds.append(seed)
-        return "garbage" if seed < 2 else GOOD
+    def call(prompt, system, seed=0, temperature=0, **kw):
+        seen.append((prompt, temperature))
+        return "garbage" if len(seen) < 3 else GOOD
 
     result = ask("p", "s", n_sentences=5, attempts=3, call=call)
     assert result["ok"] and result["attempts"] == 3
-    assert seeds == [0, 1, 2]        # the seed moves, because temperature 0 repeats itself
+    assert seen[0] == ("p", 0)
+    # retries carry the reason and a non-zero temperature; at 0 the seed is ignored so nothing
+    # would change and the same reply would come back
+    assert all(t > 0 and "rejected because not json" in p for p, t in seen[1:])
+
+
+def test_repair_names_the_failure():
+    text = repair("original question", "unknown label 'Insomnia'")
+    assert text.startswith("original question")
+    assert "unknown label 'Insomnia'" in text
 
 
 def test_ask_gives_up_and_says_why():

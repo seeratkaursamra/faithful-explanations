@@ -66,15 +66,15 @@ def parse(text, n_sentences=None):
     return out, "ok"
 
 
-def generate(prompt, system, model="qwen2.5:7b", seed=0, cache_dir="outputs/llm_cache",
-             timeout=300, transport_attempts=3):
+def generate(prompt, system, model="qwen2.5:7b", seed=0, temperature=0,
+             cache_dir="outputs/llm_cache", timeout=300, transport_attempts=3):
     """One call to Ollama, cached on disk so an interrupted run resumes instead of starting over.
 
     Only connection and timeout errors are retried here. A reply that arrives but is malformed is
     the caller's problem, because retrying it unchanged would return the same thing.
     """
     body = {"model": model, "system": system, "prompt": prompt, "stream": False, "format": "json",
-            "options": {"temperature": 0, "seed": seed}}
+            "options": {"temperature": temperature, "seed": seed}}
     cached = _cache_path(cache_dir, body)
     if cached and cached.exists():
         return cached.read_text()
@@ -101,18 +101,28 @@ def _cache_path(cache_dir, body):
     return Path(cache_dir) / f"{key}.json"
 
 
-def ask(prompt, system, n_sentences=None, attempts=3, seed=0, call=generate, **kwargs):
-    """Call the model, parse the reply, and retry a malformed one under a different seed.
+def repair(prompt, reason):
+    """Re-ask, saying what was wrong with the last reply."""
+    return (f"{prompt}\n\nYour previous reply was rejected because {reason}. "
+            "Return only the JSON object described above, with nothing before or after it.")
 
-    Temperature is 0, so repeating an identical request returns an identical reply. A retry has to
-    change something, and the seed is the only thing that can move without changing the question.
+
+def ask(prompt, system, n_sentences=None, attempts=3, seed=0, retry_temperature=0.3,
+        call=generate, **kwargs):
+    """Call the model, parse the reply, and retry a malformed one.
+
+    The first pass is temperature 0 and reproducible. Retrying is only useful if something
+    actually changes: at temperature 0 Ollama ignores the seed, so an unchanged request returns
+    an unchanged reply. A retry therefore says what was wrong and raises the temperature, which
+    is the only way to draw a different sample.
 
     Returns {ok, symptoms, reason, attempts, raw}. ok is False when every attempt failed a check.
     """
-    reason, raw = "no attempts made", None
+    reason, raw, text = "no attempts made", None, prompt
     for i in range(attempts):
-        raw = call(prompt, system, seed=seed + i, **kwargs)
+        raw = call(text, system, seed=seed, temperature=0 if i == 0 else retry_temperature, **kwargs)
         symptoms, reason = parse(raw, n_sentences)
         if symptoms is not None:
             return {"ok": True, "symptoms": symptoms, "reason": "ok", "attempts": i + 1, "raw": raw}
+        text = repair(prompt, reason)
     return {"ok": False, "symptoms": None, "reason": reason, "attempts": attempts, "raw": raw}
