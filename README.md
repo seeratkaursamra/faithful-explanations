@@ -20,6 +20,7 @@ Things I learned from the authors' code rather than the paper:
 ```bash
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+python -c "import nltk; nltk.download('punkt_tab')"   # sentence splitter data
 make test             # data-layer tests, run on the sample
 make inspect          # full data: checks counts against the paper, writes docs/reading_sample.md
 make inspect-sample   # same on the public sample; the mismatch with the paper is expected
