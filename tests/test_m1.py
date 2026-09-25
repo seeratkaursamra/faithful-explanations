@@ -72,3 +72,22 @@ def test_a_post_with_no_finite_verb_still_gets_a_prediction():
     # present tense is nan here; it must become the training mean, not a crash or a nan probability
     p = predict_proba(model(), ["Tired. So tired."])
     assert np.isfinite(p).all()
+
+
+def test_records_cover_predicted_and_gold_and_nothing_else():
+    import pandas as pd
+    from src.m1 import records
+    m = model()
+    posts = pd.DataFrame({"post_id": ["a", "b"],
+                          "text": ["I cannot sleep at night. The weather is fine.", "The film was good."],
+                          "labels": [["SLEEP_ISSUES", "FATIGUE"], ["NO_SYMPTOMS"]]})
+    probs = predict_proba(m, list(posts.text))
+    recs = records(m, posts, probs)
+    got = {(r["post_id"], r["symptom"]): (r["predicted"], r["gold"]) for r in recs}
+    # every record is predicted or gold, never NO_SYMPTOMS, and the gold FATIGUE is there even if missed
+    assert all(p or g for p, g in got.values())
+    assert not any(s == "NO_SYMPTOMS" for _, s in got)
+    assert ("a", "FATIGUE") in got and got[("a", "FATIGUE")][1]
+    sleep = next(r for r in recs if r["symptom"] == "SLEEP_ISSUES" and r["post_id"] == "a")
+    assert set(sleep["attribution"]["M1"]) == {"0", "1"}      # one score per sentence, keyed as JSON keeps it
+    assert sleep["stated_evidence"] is None and sleep["comprehensiveness"] is None

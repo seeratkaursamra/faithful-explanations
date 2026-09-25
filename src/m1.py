@@ -10,8 +10,9 @@ from scipy.sparse import csr_matrix, hstack
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
-from .data import binarizer, check_against_paper, load, split
+from .data import NO_SYMPTOMS, binarizer, check_against_paper, load, split
 from .lexicon import load_nrc, markers
+from .sentences import split as split_sentences
 from .train_bert import metrics
 
 MARKERS = ["first_person", "negative_affect", "absolutist", "present_tense"]
@@ -82,11 +83,30 @@ def explain(model, text, spans, label):
     return scores, parts
 
 
+def records(model, posts, probs, threshold=0.5):
+    """Harness records: every symptom M1 predicts or the gold marks, with each sentence's exact share
+    of the logit as the attribution. M1 states no evidence, so there is nothing to erase."""
+    out = []
+    for (post_id, text, gold), p in zip(zip(posts["post_id"], posts["text"], posts["labels"]), probs):
+        spans = split_sentences(text)
+        for j, label in enumerate(model["classes"]):
+            predicted, is_gold = bool(p[j] > threshold), label in gold
+            if label == NO_SYMPTOMS or not (predicted or is_gold):
+                continue
+            scores, _ = explain(model, text, spans, label)
+            out.append({"model": "M1", "post_id": post_id, "symptom": label, "predicted": predicted,
+                        "gold": is_gold, "stated_evidence": None, "stated_rationale": None,
+                        "attribution": {"M1": {str(i): s for i, s in scores.items()}},
+                        "comprehensiveness": None, "sufficiency": None})
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data")
     ap.add_argument("--nrc", default="data/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt")
     ap.add_argument("--out", default="outputs/m1")
+    ap.add_argument("--records", default="outputs/records", help="where m1.jsonl goes, for the harness")
     ap.add_argument("--threshold", type=float, default=0.5)
     ap.add_argument("--allow-mismatch", action="store_true", help="for the public sample")
     args = ap.parse_args()
@@ -107,7 +127,11 @@ def main():
     (out / "metrics.json").write_text(json.dumps(m, indent=2))
     pd.DataFrame(probs, columns=classes).assign(post_id=test_df["post_id"].values) \
         .to_csv(out / "test_probs.csv", index=False)
-    print(f"M1 micro-F1 {m['micro_f1']:.3f}  macro-F1 {m['macro_f1']:.3f}  (written to {out})")
+    recs = records(model, test_df, probs, args.threshold)
+    Path(args.records).mkdir(parents=True, exist_ok=True)
+    (Path(args.records) / "m1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+    print(f"M1 micro-F1 {m['micro_f1']:.3f}  macro-F1 {m['macro_f1']:.3f}  (written to {out}); "
+          f"{len(recs)} records to {args.records}/m1.jsonl")
 
 
 if __name__ == "__main__":
