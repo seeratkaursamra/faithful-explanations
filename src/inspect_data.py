@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .data import NO_SYMPTOMS, SYMPTOMS, check_against_paper, load, split, symptom_counts
+from .sentences import alignment_report
 
 # posts per symptom in the hand-reading batch, weighted toward the classes I care most about
 READING_BATCH = {
@@ -77,8 +78,10 @@ def main():
     posts, ann = load(args.data)
     check = check_against_paper(posts)
     stats = describe(posts, ann)
+    alignment, unaligned = alignment_report(posts, ann)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps({"paper_check": check, "stats": stats}, indent=2))
+    Path(args.out).write_text(json.dumps({"paper_check": check, "stats": stats, "alignment": alignment,
+                                          "unaligned": unaligned}, indent=2))
 
     print(f"posts={stats['posts']} negatives={stats['negatives']} annotation_rows={stats['annotation_rows']} "
           f"(status1={stats['annotation_rows_status1']}, status0={stats['annotation_rows_status0']})")
@@ -87,6 +90,11 @@ def main():
     for s, (ours, paper) in check["symptom_counts"].items():
         print(f"  {s:<18} {ours:>5} vs {paper:>5}{'' if ours == paper else '  <-- MISMATCH'}")
     print("matches paper:", check["matches_paper"])
+    # every sentence-level metric rests on gold sentences landing on mine, so say how often they do
+    total, aligned = alignment["total"], alignment["total"] - alignment["none"]
+    print(f"gold sentences aligned to my split: {aligned}/{total} ({aligned / total:.0%}) - exact "
+          f"{alignment['exact']}, contains {alignment['contains']}, overlap {alignment['overlap']}, none "
+          f"{alignment['none']}; sentence_id equals my index for {alignment['id_equals_index']} of the {aligned}")
     print(f"stats written to {args.out}")
 
     if args.reading_sample:

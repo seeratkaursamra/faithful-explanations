@@ -163,3 +163,19 @@ def test_run_end_to_end_on_a_toy_dataset():
     # the reference set is the training post's rationale only; p1's own gold must not be in it
     assert calls[1:] == [["Reports never sleeping."]]
     assert hypothesis[0]["verdict"].startswith("inconclusive")          # 1 false positive
+
+
+def test_the_bootstrap_seed_reaches_every_interval():
+    items = pd.concat([items_frame(8, 0, 0, 0), items_frame(0, 6, 0, 0)])
+    items["x"] = np.random.default_rng(1).random(len(items))
+    first = compare(items, "x", {"n_resamples": 200, "seed": 0})
+    again = compare(items, "x", {"n_resamples": 200, "seed": 0})
+    other = compare(items, "x", {"n_resamples": 200, "seed": 5})
+    assert first == again
+    assert (first["gap_lo"], first["tp_lo"]) != (other["gap_lo"], other["tp_lo"])
+
+
+def test_the_config_matches_the_code_defaults():
+    import yaml
+    from src.evaluate import BOOT
+    assert yaml.safe_load(open("configs/evaluate.yaml"))["bootstrap"] == BOOT

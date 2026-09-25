@@ -58,7 +58,8 @@ nothing has been run on real data yet.
   the same joint prompt, written as harness records with FNs included and a parse-failure log.
 - `src/train_bert.py` - the baseline, hyperparameters from the config, seeds and device handling.
 - `src/inspect_data.py`, `src/figures.py` - stats + hand-reading batch, and the pipeline figure.
-- `configs/bert_baseline.yaml`, `configs/prompts.yaml` - training recipe and the M3 prompts
+- `configs/bert_baseline.yaml`, `configs/prompts.yaml`, `configs/evaluate.yaml` - training recipe, the M3 prompts,
+  and the bootstrap settings
   (joint, decoupled control, label-only for LIME perturbations).
 
 ## Data

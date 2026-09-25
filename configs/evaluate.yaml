@@ -1,0 +1,4 @@
+# Every interval in the harness: 95% percentile bootstrap over posts (docs/prereg.md, analysis rules).
+bootstrap:
+  n_resamples: 1000
+  seed: 0

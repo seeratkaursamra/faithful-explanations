@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from .data import SYMPTOMS, gold, gold_text, load, references, split
 from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, did_ci, holm, jaccard, mann_whitney_p,
@@ -31,6 +32,9 @@ KIND = {(True, True): "TP", (True, False): "FP", (False, True): "FN", (False, Fa
 # Prereg: H1 needs the plausibility gap to be small, and is inconclusive below 30 false positives.
 SMALL_PLAUSIBILITY_GAP = 0.05
 MIN_FALSE_POSITIVES = 30
+
+# Bootstrap settings; the real values come from configs/evaluate.yaml, these match it.
+BOOT = {"n_resamples": 1000, "seed": 0}
 
 
 def gold_evidence(ann, post_id, symptom, text, spans):
@@ -74,17 +78,17 @@ def score(record, g_evid, g_text, vectors, refs):
     return row
 
 
-def compare(items, metric):
+def compare(items, metric, boot=BOOT):
     """TP against FP on one metric: both means with intervals, the gap, its test and effect size."""
     have = items[items[metric].notna()]
     tp, fp = have[have["correctness"] == "TP"], have[have["correctness"] == "FP"]
     row = {"metric": metric, "n_tp": len(tp), "n_fp": len(fp)}
     for name, group in (("tp", tp), ("fp", fp)):
         if len(group):
-            row[f"{name}_mean"], row[f"{name}_lo"], row[f"{name}_hi"] = bootstrap_ci(group[metric], posts=group["post_id"])
+            row[f"{name}_mean"], row[f"{name}_lo"], row[f"{name}_hi"] = bootstrap_ci(group[metric], posts=group["post_id"], **boot)
     if len(tp) and len(fp):
         row["gap"], row["gap_lo"], row["gap_hi"] = unpaired_diff_ci(tp[metric], fp[metric], posts_a=tp["post_id"],
-                                                                    posts_b=fp["post_id"])
+                                                                    posts_b=fp["post_id"], **boot)
         row["p"] = mann_whitney_p(tp[metric], fp[metric])
         row["cliffs_delta"] = cliffs_delta(tp[metric], fp[metric])
     return row
@@ -95,19 +99,19 @@ def metric_columns(items):
     return [c for c in items.columns if c not in fixed and items[c].notna().any()]
 
 
-def summarise(items):
+def summarise(items, boot=BOOT):
     """One row per (model, symptom or ALL, metric). Per-symptom p-values are Holm-corrected across
     the symptoms, and a symptom with fewer than MIN_SUPPORT gold positives is flagged, not dropped."""
     rows = []
     for model, m_items in items.groupby("model"):
         for metric in metric_columns(m_items):
-            rows.append({"model": model, "symptom": "ALL", **compare(m_items, metric)})
+            rows.append({"model": model, "symptom": "ALL", **compare(m_items, metric, boot)})
             per_symptom = []
             for symptom in SYMPTOMS:
                 s_items = m_items[m_items["symptom"] == symptom]
                 if len(s_items):
                     support = int(s_items["correctness"].isin(["TP", "FN"]).sum())
-                    per_symptom.append({"model": model, "symptom": symptom, **compare(s_items, metric),
+                    per_symptom.append({"model": model, "symptom": symptom, **compare(s_items, metric, boot),
                                         "support": support, "low_support": support < MIN_SUPPORT})
             tested = [r for r in per_symptom if "p" in r and not np.isnan(r["p"])]
             for r, adjusted in zip(tested, holm([r["p"] for r in tested])):
@@ -116,7 +120,7 @@ def summarise(items):
     return pd.DataFrame(rows)
 
 
-def h1(items, model, faithfulness="comprehensiveness"):
+def h1(items, model, faithfulness="comprehensiveness", boot=BOOT):
     """The primary statistic and the pre-registered verdict for one model."""
     have = items[(items["model"] == model) & items["plausibility"].notna() & items[faithfulness].notna()]
     tp, fp = have[have["correctness"] == "TP"], have[have["correctness"] == "FP"]
@@ -126,12 +130,12 @@ def h1(items, model, faithfulness="comprehensiveness"):
                           f"{faithfulness}, fewer than {MIN_FALSE_POSITIVES}")
         return out
 
-    posts = {"posts_correct": tp["post_id"], "posts_wrong": fp["post_id"]}
+    posts = {"posts_correct": tp["post_id"], "posts_wrong": fp["post_id"], **boot}
     out["did"] = did_ci(tp["plausibility"], tp[faithfulness], fp["plausibility"], fp[faithfulness], **posts)
     out["plausibility_gap"] = unpaired_diff_ci(tp["plausibility"], fp["plausibility"],
-                                               posts_a=tp["post_id"], posts_b=fp["post_id"])
+                                               posts_a=tp["post_id"], posts_b=fp["post_id"], **boot)
     out["faithfulness_gap"] = unpaired_diff_ci(tp[faithfulness], fp[faithfulness],
-                                               posts_a=tp["post_id"], posts_b=fp["post_id"])
+                                               posts_a=tp["post_id"], posts_b=fp["post_id"], **boot)
     out["verdict"] = verdict(out["did"], out["plausibility_gap"], out["faithfulness_gap"])
     return out
 
@@ -147,7 +151,7 @@ def verdict(did, plausibility_gap, faithfulness_gap):
     return "partial support: both degrade, faithfulness faster"
 
 
-def run(records, posts, ann, train_ids, embed):
+def run(records, posts, ann, train_ids, embed, boot=BOOT):
     """Score every record, then summarise. `embed` maps a list of texts to a list of vectors."""
     text_by_id = dict(zip(posts["post_id"], posts["text"]))
     ref_texts = references(ann, train_ids)
@@ -166,7 +170,7 @@ def run(records, posts, ann, train_ids, embed):
         rows.append(score(record, g_evid, g_text, vectors, refs))
     items = pd.DataFrame(rows)
     models = sorted(items["model"].unique())
-    return items, summarise(items), [h1(items, m) for m in models if "plausibility" in items]
+    return items, summarise(items, boot), [h1(items, m, boot=boot) for m in models if "plausibility" in items]
 
 
 def main():
@@ -176,12 +180,14 @@ def main():
     ap.add_argument("records", nargs="+", help="JSONL files in the format above")
     ap.add_argument("--data", default="data")
     ap.add_argument("--out", default="outputs/metrics")
+    ap.add_argument("--config", default="configs/evaluate.yaml")
     args = ap.parse_args()
+    boot = yaml.safe_load(Path(args.config).read_text())["bootstrap"]
 
     posts, ann = load(args.data)
     train, _ = split(posts)
     records = [json.loads(line) for path in args.records for line in Path(path).read_text().splitlines() if line]
-    items, summary, hypothesis = run(records, posts, ann, train["post_id"], embed)
+    items, summary, hypothesis = run(records, posts, ann, train["post_id"], embed, boot)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
