@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .data import NO_SYMPTOMS, SYMPTOMS, check_against_paper, load, split, symptom_counts
+from .data import NO_SYMPTOMS, SYMPTOMS, check_against_paper, check_split, load, split, symptom_counts
 from .lexicon import markers
 from .sentences import split as split_sentences
 from .sentences import alignment_report
@@ -104,6 +104,11 @@ def main():
     for s, (ours, paper) in check["symptom_counts"].items():
         print(f"  {s:<18} {ours:>5} vs {paper:>5}{'' if ours == paper else '  <-- MISMATCH'}")
     print("matches paper:", check["matches_paper"])
+    authors = check_split(split(posts)[1])
+    print("test split matches the authors' (per-label support from their svm notebook):", authors["matches_authors"])
+    for label, (ours, theirs) in authors["support"].items():
+        if ours != theirs:
+            print(f"  {label:<18} {ours:>4} vs {theirs:>4}  <-- differs")
     # every sentence-level metric rests on gold sentences landing on mine, so say how often they do
     total, aligned = alignment["total"], alignment["total"] - alignment["none"]
     print(f"gold sentences aligned to my split: {aligned}/{total} ({aligned / total:.0%}) - exact "

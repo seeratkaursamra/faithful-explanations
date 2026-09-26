@@ -1,4 +1,5 @@
-"""Load ReDSM5 the way the authors' notebook does, so the split is identical everywhere."""
+"""Load ReDSM5 the way the authors' notebook does. The same call and seed give the same split only if the
+rows come in the same order as their redsm5.csv, so check_split compares the result with their test set."""
 from pathlib import Path
 
 import pandas as pd
@@ -32,6 +33,13 @@ PAPER_COUNTS = {
 }
 PAPER_N_POSTS = 1484
 PAPER_N_NEGATIVES = 392
+
+# Per-label support in the authors' test split, printed by their examples/svm.ipynb. Matching all ten
+# is strong evidence our split holds the same 297 posts, which the call and seed alone cannot promise.
+AUTHORS_TEST_SUPPORT = {
+    "ANHEDONIA": 25, "APPETITE_CHANGE": 10, "COGNITIVE_ISSUES": 10, "DEPRESSED_MOOD": 70, "FATIGUE": 28,
+    "NO_SYMPTOMS": 73, "PSYCHOMOTOR": 8, "SLEEP_ISSUES": 18, "SUICIDAL_THOUGHTS": 28, "WORTHLESSNESS": 72,
+}
 
 
 def load(data_dir="data", sample=False):
@@ -109,6 +117,16 @@ def symptom_counts(posts):
             if lab != NO_SYMPTOMS:
                 counts[lab] = counts.get(lab, 0) + 1
     return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+
+
+def check_split(test):
+    """Our test split's per-label support against the authors'. {label: (ours, theirs)} and whether all match."""
+    ours = {label: 0 for label in AUTHORS_TEST_SUPPORT}
+    for labs in test["labels"]:
+        for lab in labs:
+            ours[lab] = ours.get(lab, 0) + 1
+    support = {label: (ours.get(label, 0), n) for label, n in AUTHORS_TEST_SUPPORT.items()}
+    return {"support": support, "matches_authors": all(a == b for a, b in support.values())}
 
 
 def check_against_paper(posts):

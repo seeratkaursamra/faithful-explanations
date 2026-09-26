@@ -1,4 +1,4 @@
-.PHONY: test inspect inspect-sample baseline baseline5 m1 m2 m3 m3-lime evaluate evaluate-minilm cases figures clean
+.PHONY: test inspect inspect-sample baseline baseline5 svm m1 m2 m3 m3-lime evaluate evaluate-minilm cases figures clean
 
 test:
 	python -m pytest -q tests
@@ -25,6 +25,10 @@ baseline:
 
 baseline5:
 	python -m src.train_bert --config configs/bert_baseline.yaml --seeds 0 1 2 3 4
+
+# the authors' SVM, a deterministic second reproduction check (their 0.39 / 0.28)
+svm:
+	python -m src.svm_baseline
 
 # needs data/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt, downloaded by hand
 m1:

@@ -59,6 +59,7 @@ The full dataset has not arrived, so nothing has been run on real data yet.
   adds LIME per predicted symptom (the overnight run); each perturbation is asked once per post.
 - `src/run_m2.py` - M2 over the test split from the seed-0 checkpoint: IG and LIME on predicted symptoms, the
   decoupled control explaining BERT's labels (held to them), and erasure on BERT of what it cites.
+- `src/svm_baseline.py` - the authors' SVM copied exactly; a deterministic second reproduction check.
 - `src/train_bert.py` - the baseline, hyperparameters from the config, seeds and device handling.
 - `src/inspect_data.py` - stats, the gold-alignment rate, the first-person/tense check, and a hand-reading batch.
 - `src/figures.py` - Fig 1 (pipeline) always; Figs 2-5 and Tables 1-3 from a finished harness run.
@@ -76,7 +77,8 @@ The full dataset has not arrived, so nothing has been run on real data yet.
 - Split: train_test_split(test_size=0.2, random_state=42), unstratified -> 1187 / 297.
 - Baseline recipe: bert-base-uncased, max_len 512, batch 8, AdamW 2e-5, 5 epochs, BCE, sigmoid > 0.5.
   Reported 0.51 micro-F1 / 0.36 macro-F1 (single unseeded run); tolerance +/- 0.02 over 5 seeds.
-- `make inspect` must print "matches paper: True" before any modelling. `require_paper_match` in the
+- `make inspect` must print "matches paper: True" before any modelling. It also checks the test split against
+  the authors' per-label support (from their svm notebook); `make svm` should then give 0.39 / 0.28 exactly. `require_paper_match` in the
   config makes training refuse otherwise; `--allow-mismatch` / `make inspect-sample` is only for the
   public sample.
 
@@ -86,7 +88,7 @@ python3 -m venv venv && source venv/bin/activate && pip install -r requirements.
 python -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')"
 make test                                                  # pytest over tests/
 make inspect | inspect-sample                              # full data | public sample
-make baseline | baseline5                                  # one seed | five seeds + summary.json
+make baseline | baseline5 | svm                            # one seed | five seeds + summary.json | the authors' SVM
 make m1                                                    # M1; needs the NRC file in data/
 make m2 | m3 | m3-lime                                     # records for M2 | M3 | M3 with LIME (overnight); need ollama
 make evaluate | evaluate-minilm                            # the harness | rerun with the secondary embedding model

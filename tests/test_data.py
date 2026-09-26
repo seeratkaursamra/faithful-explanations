@@ -94,3 +94,14 @@ def test_references_only_use_the_posts_given():
     ])
     assert references(ann, ["train1", "train2"]) == {"FATIGUE": ["Tired.", "Exhausted."],
                                                      "SLEEP_ISSUES": ["No sleep."]}
+
+
+def test_check_split_matches_only_the_authors_exact_support():
+    from src.data import AUTHORS_TEST_SUPPORT, check_split
+    labels = [[label] for label, n in AUTHORS_TEST_SUPPORT.items() for _ in range(n)]
+    theirs = pd.DataFrame({"labels": labels})
+    assert check_split(theirs)["matches_authors"]
+    off_by_one = pd.DataFrame({"labels": labels[1:]})                  # one anhedonia label short
+    result = check_split(off_by_one)
+    assert not result["matches_authors"]
+    assert result["support"]["ANHEDONIA"] == (24, 25)
