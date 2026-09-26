@@ -277,3 +277,98 @@ def test_randomised_check_uses_the_median_absolute_agreement():
     fell_apart = pd.DataFrame({"ig_random_spearman": [0.1, -0.2, 0.3]})
     assert randomised_check(fell_apart)["degraded"]
     assert randomised_check(pd.DataFrame({"x": [1]})) is None
+
+
+# --- H2 and H4 ---------------------------------------------------------------------------------------
+
+def symptom_items(model, symptom, tp, fp, fn, faith):
+    rows = [(k, faith) for k in ["TP"] * tp + ["FP"] * fp] + [("FN", np.nan)] * fn
+    return pd.DataFrame([{"model": model, "post_id": f"{model}{symptom}{i}", "symptom": symptom, "correctness": k,
+                          "comprehensiveness": c} for i, (k, c) in enumerate(rows)])
+
+
+def test_per_symptom_f1_needs_no_true_negatives():
+    from src.evaluate import per_symptom
+    row = per_symptom(symptom_items("M2", "FATIGUE", tp=3, fp=1, fn=2, faith=0.4)).iloc[0]
+    assert row["f1"] == pytest.approx(6 / 9) and row["support"] == 5 and row["faithfulness"] == pytest.approx(0.4)
+
+
+SYMPTOM_SET = ["DEPRESSED_MOOD", "WORTHLESSNESS", "FATIGUE", "SLEEP_ISSUES"]
+
+
+def h2_items(faith_rises_with_f1):
+    frames = []
+    for model in ("M2", "M3"):
+        for k, symptom in enumerate(SYMPTOM_SET):
+            tp, fn = 6 + 2 * k, 6 - k                        # F1 climbs with k; support always >= 10
+            faith = 0.2 + 0.1 * k if faith_rises_with_f1 else 0.6 - 0.1 * k
+            frames.append(symptom_items(model, symptom, tp=tp, fp=3, fn=fn, faith=faith))
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_h2_refuted_when_faithfulness_rises_with_accuracy():
+    from src.evaluate import h2
+    out = h2(h2_items(True), boot={"n_resamples": 200, "seed": 0})
+    assert out["spearman"][0] > 0.8 and out["verdict"].startswith("refuted") and out["points"] == 8
+
+
+def test_h2_supported_when_they_do_not():
+    from src.evaluate import h2
+    out = h2(h2_items(False), boot={"n_resamples": 200, "seed": 0})
+    assert out["spearman"][0] < 0 and out["verdict"] == "supported"
+
+
+def test_h2_leaves_out_low_support_symptoms_and_needs_three_points():
+    from src.evaluate import h2
+    items = pd.concat([h2_items(True), symptom_items("M2", "PSYCHOMOTOR", tp=2, fp=1, fn=1, faith=0.9)])
+    assert "PSYCHOMOTOR" not in h2(items, boot={"n_resamples": 50, "seed": 0})["symptoms"]
+    assert h2(symptom_items("M2", "FATIGUE", 8, 2, 4, 0.3))["verdict"].startswith("inconclusive")
+
+
+def m1_items(density):
+    return pd.DataFrame([{"model": "M1", "post_id": f"p{i}", "symptom": "FATIGUE", "correctness": "TP",
+                          "M1_density_marker_words": density + 0.01 * (i % 3)} for i in range(20)])
+
+
+def test_h4_verdicts():
+    from src.evaluate import h4
+    boot = {"n_resamples": 200, "seed": 0}
+    assert h4(m1_items(0.05), {"M1": 0.45, "M2": 0.51}, boot)["verdict"] == "supported"
+    assert "trails M2" in h4(m1_items(0.05), {"M1": 0.35, "M2": 0.51}, boot)["verdict"]
+    assert "not richer" in h4(m1_items(-0.05), {"M1": 0.45, "M2": 0.51}, boot)["verdict"]
+    assert h4(m1_items(0.05), {"M1": 0.45}, boot)["verdict"].startswith("inconclusive")
+
+
+def noisy_items(rates, seed):
+    """Comprehensiveness as 0/1 flips, as M3's are, drawn per item at a rate per symptom."""
+    rng = np.random.default_rng(seed)
+    frames = []
+    for model in ("M2", "M3"):
+        for k, symptom in enumerate(SYMPTOM_SET):
+            tp, fn = 6 + 2 * k, 6 - k
+            flips = (rng.random(tp + 3) < rates[k]).astype(float)
+            frames.append(pd.DataFrame(
+                [{"model": model, "post_id": f"{model}{symptom}{i}", "symptom": symptom, "correctness": c,
+                  "comprehensiveness": f} for i, (c, f) in enumerate(zip(["TP"] * tp + ["FP"] * 3, flips))]
+                + [{"model": model, "post_id": f"{model}{symptom}n{i}", "symptom": symptom, "correctness": "FN",
+                    "comprehensiveness": np.nan} for i in range(fn)]))
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_h2_a_positive_correlation_whose_interval_reaches_zero_is_still_supported():
+    # the prereg's rule is the interval, not the sign of the estimate
+    from src.evaluate import h2
+    out = h2(noisy_items([0.45, 0.5, 0.5, 0.55], seed=4), boot={"n_resamples": 300, "seed": 0})
+    rho, lo, hi = out["spearman"]
+    assert rho > 0 and lo < 0 < hi
+    assert out["verdict"] == "supported"
+
+
+def test_h4_a_positive_density_whose_interval_crosses_zero_is_not_enough():
+    from src.evaluate import h4
+    items = pd.DataFrame([{"model": "M1", "post_id": f"p{i}", "symptom": "FATIGUE", "correctness": "TP",
+                           "M1_density_marker_words": 0.10 if i % 2 else -0.09} for i in range(20)])
+    out = h4(items, {"M1": 0.45, "M2": 0.51}, {"n_resamples": 300, "seed": 0})
+    mean, lo, hi = out["marker_density"]
+    assert mean > 0 and lo < 0
+    assert "not richer" in out["verdict"]

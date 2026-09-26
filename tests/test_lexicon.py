@@ -51,3 +51,10 @@ def test_load_nrc_refuses_a_file_that_yields_no_words(tmp_path):
     vad.write_text("word\tvalence\tarousal\tdominance\nafraid\t0.1\t0.8\t0.2\n")
     with pytest.raises(ValueError, match="word-level EmoLex"):
         load_nrc(vad)
+
+
+def test_marker_words_counts_a_word_once_even_if_it_is_two_markers():
+    # I, always, hate, myself: first person, absolutist, negative, first person -> all 4 of 4
+    assert markers("I always hate myself.", {"hate"})["marker_words"] == 1.0
+    # "never" is absolutist and, here, also negative: one word, counted once -> 1 of 3
+    assert markers("Things never change.", {"never"})["marker_words"] == pytest.approx(1 / 3)

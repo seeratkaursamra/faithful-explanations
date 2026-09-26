@@ -223,3 +223,11 @@ def test_erasure_with_any_predict_function():
     assert erasure(sentences, set(), 0.9, predict) == (None, None)
     assert erasure(sentences, {0, 1}, 0.9, predict)[0] is None        # nothing would be left
     assert erasure(sentences, {0}, 0.9, lambda kept: None) == (None, None)
+
+
+def test_resample_posts_keeps_every_row_of_a_drawn_post():
+    from src.metrics import resample_posts
+    posts = ["a", "a", "b", "c"]
+    for rows in resample_posts(posts, n_resamples=50, seed=0):
+        drawn = [posts[r] for r in rows]
+        assert drawn.count("a") % 2 == 0          # a's two rows always come together

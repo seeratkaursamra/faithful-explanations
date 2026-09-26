@@ -133,6 +133,13 @@ def _post_draws(groups, n_resamples, seed):
         yield [np.array([i for p in drawn for i in items.get(p, [])], dtype=int) for items in where]
 
 
+def resample_posts(posts, n_resamples=1000, seed=0):
+    """Row positions for each resample of posts: every row of each drawn post, for statistics that
+    are not a mean, such as a correlation computed from per-symptom aggregates."""
+    for (rows,) in _post_draws([list(posts)], n_resamples, seed):
+        yield rows
+
+
 def _ids(posts, n, group):
     return [(group, i) for i in range(n)] if posts is None else list(posts)
 

@@ -22,12 +22,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
+from scipy.stats import spearmanr
 
 from .data import SYMPTOMS, gold, gold_text, load, references, split, symptom_counts
 from .lexicon import load_nrc, markers
 from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, did_ci, holm, jaccard, mann_whitney_p,
-                      mean_similarity, precision_at_k, precision_recall_f1, rank_agreement, symptom_null, top_k,
-                      unpaired_diff_ci)
+                      mean_similarity, precision_at_k, precision_recall_f1, rank_agreement, resample_posts,
+                      symptom_null, top_k, unpaired_diff_ci)
 from .sentences import align, texts
 from .sentences import split as split_sentences
 
@@ -40,6 +41,9 @@ MIN_FALSE_POSITIVES = 30
 # Prereg H3: the gap should be wider for these than for suicidal thoughts.
 H3_TARGETS = ["PSYCHOMOTOR", "APPETITE_CHANGE", "COGNITIVE_ISSUES"]
 H3_REFERENCE = "SUICIDAL_THOUGHTS"
+
+# Prereg H4: M1 may trail M2 by at most this much micro-F1.
+H4_MAX_F1_GAP = 0.10
 
 # Randomised-model check: IG has degraded if trained and randomised-head sentence rankings agree
 # less than this, as a median of |Spearman|. The prereg names the check but not a number; see the log.
@@ -237,7 +241,68 @@ def randomised_check(items):
     return {"n": len(rho), "median_abs_spearman": median, "degraded": median < RANDOMISED_MAX_AGREEMENT}
 
 
-def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None):
+def per_symptom(items, faithfulness="comprehensiveness"):
+    """One row per (model, symptom): F1 from the TP/FP/FN counts (F1 needs no true negatives), gold
+    support, and mean faithfulness over the predicted items that have it."""
+    rows = []
+    for (model, symptom), g in items.groupby(["model", "symptom"]):
+        tp, fp, fn = (int((g["correctness"] == k).sum()) for k in ("TP", "FP", "FN"))
+        predicted = g[g["correctness"].isin(["TP", "FP"])]
+        faith = predicted[faithfulness].dropna() if faithfulness in g else predicted.iloc[:0]
+        rows.append({"model": model, "symptom": symptom, "f1": 2 * tp / (2 * tp + fp + fn) if tp + fp + fn else np.nan,
+                     "support": tp + fn, "faithfulness": float(faith.mean()) if len(faith) else np.nan})
+    return pd.DataFrame(rows)
+
+
+def _f1_faith_rho(items, keep, faithfulness):
+    points = per_symptom(items, faithfulness)
+    points = points[points["symptom"].isin(keep)].dropna(subset=["f1", "faithfulness"])
+    if len(points) < 3 or points["f1"].nunique() < 2 or points["faithfulness"].nunique() < 2:
+        return np.nan, len(points)
+    return float(spearmanr(points["f1"], points["faithfulness"])[0]), len(points)
+
+
+def h2(items, faithfulness="comprehensiveness", boot=BOOT):
+    """Prereg H2: per-symptom F1 against per-symptom faithfulness, pooled across models, Spearman with a
+    post-level interval. Supported if the interval reaches zero or the correlation is negative.
+    Symptoms under the support rule are left out, as the prereg says they are not argued from."""
+    support = per_symptom(items, faithfulness).groupby("symptom")["support"].max()
+    keep = set(support[support >= MIN_SUPPORT].index)
+    rho, n = _f1_faith_rho(items, keep, faithfulness)
+    out = {"faithfulness": faithfulness, "points": n, "symptoms": sorted(keep)}
+    if np.isnan(rho):
+        out["verdict"] = f"inconclusive: {n} (model, symptom) points with both F1 and {faithfulness}, need 3"
+        return out
+    draws = [_f1_faith_rho(items.iloc[rows], keep, faithfulness)[0]
+             for rows in resample_posts(items["post_id"], boot["n_resamples"], boot["seed"])]
+    draws = [d for d in draws if not np.isnan(d)]
+    out["spearman"] = (rho, float(np.percentile(draws, 2.5)), float(np.percentile(draws, 97.5)))
+    out["verdict"] = "supported" if out["spearman"][1] <= 0 else "refuted: accuracy and faithfulness rise together"
+    return out
+
+
+def h4(items, micro_f1, boot=BOOT):
+    """Prereg H4: M1's micro-F1 within H4_MAX_F1_GAP of M2's, and M1's top-attributed sentences richer
+    in marker words than the rest, the mean difference's interval above zero. micro_f1 maps "M1" and
+    "M2" to their test micro-F1; M2's is the five-seed mean, the reproduced baseline."""
+    out = {"micro_f1": micro_f1}
+    column = "M1_density_marker_words"
+    m1 = items[(items["model"] == "M1") & items["correctness"].isin(["TP", "FP"])] if column in items else items.iloc[:0]
+    m1 = m1[m1[column].notna()] if len(m1) else m1
+    if not {"M1", "M2"} <= set(micro_f1) or not len(m1):
+        out["verdict"] = "inconclusive: needs both micro-F1s and M1 marker density"
+        return out
+    out["f1_gap"] = micro_f1["M2"] - micro_f1["M1"]
+    out["marker_density"] = bootstrap_ci(m1[column], posts=m1["post_id"], **boot)
+    cheap = out["f1_gap"] <= H4_MAX_F1_GAP
+    on_markers = out["marker_density"][1] > 0
+    out["verdict"] = "supported" if cheap and on_markers else "refuted: " + " and ".join(
+        reason for reason, failed in [(f"M1 trails M2 by {out['f1_gap']:.3f} micro-F1", not cheap),
+                                      ("M1's top sentences are not richer in marker words", not on_markers)] if failed)
+    return out
+
+
+def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, micro_f1=None):
     """Score every record, then summarise. `embed` maps a list of texts to a list of vectors.
     Returns the items, the summary table, and the H1 and H3 results per model."""
     text_by_id = dict(zip(posts["post_id"], posts["text"]))
@@ -260,7 +325,9 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None):
     models = sorted(items["model"].unique())
     train_counts = symptom_counts(posts[posts["post_id"].isin(set(train_ids))]) if "labels" in posts else None
     hypotheses = {"H1": [h1(items, m, boot=boot) for m in models if "plausibility" in items],
-                  "H3": [h3(items, m, train_counts, boot=boot) for m in models if "plausibility" in items]}
+                  "H2": [h2(items, boot=boot)],
+                  "H3": [h3(items, m, train_counts, boot=boot) for m in models if "plausibility" in items],
+                  "H4": [h4(items, micro_f1 or {}, boot)]}
     return items, summarise(items, boot), hypotheses
 
 
@@ -273,13 +340,20 @@ def main():
     ap.add_argument("--out", default="outputs/metrics")
     ap.add_argument("--config", default="configs/evaluate.yaml")
     ap.add_argument("--nrc", default="data/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt")
+    ap.add_argument("--m1-metrics", default="outputs/m1/metrics.json")
+    ap.add_argument("--m2-summary", default="outputs/bert_baseline/summary.json", help="the five-seed mean")
     args = ap.parse_args()
+    micro_f1 = {}
+    if Path(args.m1_metrics).exists():
+        micro_f1["M1"] = json.loads(Path(args.m1_metrics).read_text())["micro_f1"]
+    if Path(args.m2_summary).exists():
+        micro_f1["M2"] = json.loads(Path(args.m2_summary).read_text())["micro_f1"]["mean"]
     boot = yaml.safe_load(Path(args.config).read_text())["bootstrap"]
 
     posts, ann = load(args.data)
     train, _ = split(posts)
     records = [json.loads(line) for path in args.records for line in Path(path).read_text().splitlines() if line]
-    items, summary, hypotheses = run(records, posts, ann, train["post_id"], embed, boot, load_nrc(args.nrc))
+    items, summary, hypotheses = run(records, posts, ann, train["post_id"], embed, boot, load_nrc(args.nrc), micro_f1)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -288,7 +362,7 @@ def main():
     (out / "hypotheses.json").write_text(json.dumps(hypotheses, indent=2, default=float))
     for name, results in hypotheses.items():
         for h in results:
-            print(f"{name} {h['model']}: {h['verdict']}")
+            print(f"{name} {h.get('model', 'all models')}: {h['verdict']}")
 
 
 if __name__ == "__main__":

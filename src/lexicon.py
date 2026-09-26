@@ -34,7 +34,8 @@ def load_nrc(path="data/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt", categories=NRC
 
 
 def markers(text, negative_words):
-    """Rates per word for first person, negative affect and absolutist words, and the present-tense
+    """Rates per word for first person, negative affect and absolutist words, the rate of words that
+    are any of the three (each word counted once; H4's single marker measure), and the present-tense
     share of finite verbs. nan where there is nothing to divide by: no words, or no finite verb."""
     tagged = pos_tag(word_tokenize(text or ""))
     words = [w.lower() for w, _ in tagged if w.isalpha()]
@@ -44,5 +45,7 @@ def markers(text, negative_words):
         "first_person": sum(w in FIRST_PERSON for w in words) / n if n else np.nan,
         "negative_affect": sum(w in negative_words for w in words) / n if n else np.nan,
         "absolutist": sum(w in ABSOLUTIST for w in words) / n if n else np.nan,
+        "marker_words": sum(w in FIRST_PERSON or w in negative_words or w in ABSOLUTIST for w in words) / n
+        if n else np.nan,
         "present_tense": sum(t in PRESENT for t in finite) / len(finite) if finite else np.nan,
     }
