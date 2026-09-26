@@ -372,3 +372,60 @@ def test_h4_a_positive_density_whose_interval_crosses_zero_is_not_enough():
     mean, lo, hi = out["marker_density"]
     assert mean > 0 and lo < 0
     assert "not richer" in out["verdict"]
+
+
+# --- the whole-study conditions ------------------------------------------------------------------------
+
+def study_items(n_fp=40, ig_lime=0.5, random_rho=0.2):
+    rows = [{"model": "M2", "post_id": f"t{i}", "symptom": "FATIGUE", "correctness": "TP",
+             "ig_lime_spearman": ig_lime, "ig_random_spearman": random_rho} for i in range(10)]
+    rows += [{"model": "M2", "post_id": f"f{i}", "symptom": "FATIGUE", "correctness": "FP",
+              "ig_lime_spearman": ig_lime, "ig_random_spearman": random_rho} for i in range(n_fp)]
+    return pd.DataFrame(rows)
+
+
+BASELINE_OK = {"micro_f1": {"mean": 0.505}, "within_tolerance": True}
+LOGS_OK = {"M3": {"failure_rate": 0.02}, "M2": {"decoupled_asked": 100, "decoupled_failures": 3}}
+
+
+def status_of(result, fragment):
+    return next(c["status"] for c in result["checks"] if fragment in c["condition"])
+
+
+def test_study_is_clear_only_when_every_condition_was_run_and_passed():
+    from src.evaluate import study_checks
+    assert study_checks(study_items(), BASELINE_OK, LOGS_OK)["status"] == "clear"
+
+
+def test_each_condition_can_trigger_on_its_own():
+    from src.evaluate import study_checks
+    cases = [
+        (study_checks(study_items(), {"micro_f1": {"mean": 0.45}, "within_tolerance": False}, LOGS_OK), "baseline"),
+        (study_checks(study_items(ig_lime=0.1), BASELINE_OK, LOGS_OK), "IG and LIME"),
+        (study_checks(study_items(random_rho=0.8), BASELINE_OK, LOGS_OK), "randomised head"),
+        (study_checks(study_items(), BASELINE_OK, {**LOGS_OK, "M3": {"failure_rate": 0.12}}), "parse failures"),
+        (study_checks(study_items(), BASELINE_OK, {**LOGS_OK, "M2": {"decoupled_asked": 50, "decoupled_failures": 6}}),
+         "parse failures"),
+        (study_checks(study_items(n_fp=29), BASELINE_OK, LOGS_OK), "false positives"),
+    ]
+    for result, fragment in cases:
+        assert result["status"] == "inconclusive", fragment
+        assert status_of(result, fragment) == "triggered", fragment
+
+
+def test_a_missing_input_is_not_run_never_a_pass():
+    from src.evaluate import study_checks
+    result = study_checks(study_items().drop(columns=["ig_random_spearman"]))
+    assert result["status"] == "incomplete"
+    assert status_of(result, "baseline") == "not run"
+    assert status_of(result, "randomised head") == "not run"
+    assert status_of(result, "parse failures") == "not run"
+    assert status_of(result, "IG and LIME") == "clear"
+
+
+def test_ig_lime_agreement_is_judged_on_m2_alone():
+    # the prereg names M2; another model's rows, however they disagree, must not move the check
+    from src.evaluate import study_checks
+    other = study_items(ig_lime=-0.9).assign(model="MX")
+    result = study_checks(pd.concat([study_items(), other, other]), BASELINE_OK, LOGS_OK)
+    assert status_of(result, "IG and LIME") == "clear"

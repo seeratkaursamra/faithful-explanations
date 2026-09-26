@@ -45,6 +45,10 @@ H3_REFERENCE = "SUICIDAL_THOUGHTS"
 # Prereg H4: M1 may trail M2 by at most this much micro-F1.
 H4_MAX_F1_GAP = 0.10
 
+# Prereg conditions for calling the whole study inconclusive.
+MIN_IG_LIME_AGREEMENT = 0.2      # median Spearman between IG and LIME on M2
+MAX_PARSE_FAILURE = 0.10         # LLM replies still unparsable after retries
+
 # Randomised-model check: IG has degraded if trained and randomised-head sentence rankings agree
 # less than this, as a median of |Spearman|. The prereg names the check but not a number; see the log.
 RANDOMISED_MAX_AGREEMENT = 0.5
@@ -302,7 +306,50 @@ def h4(items, micro_f1, boot=BOOT):
     return out
 
 
-def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, micro_f1=None):
+def study_checks(items, baseline=None, logs=None):
+    """Every condition under which the prereg calls the whole study inconclusive, each marked triggered,
+    clear, or not run. A missing input is "not run", never a pass. `baseline` is the five-seed
+    summary.json; `logs` maps "M2" and "M3" to their run logs."""
+    logs = logs or {}
+    checks = []
+
+    def check(condition, value, triggered):
+        checks.append({"condition": condition, "value": value,
+                       "status": "not run" if triggered is None else "triggered" if triggered else "clear"})
+
+    check("BERT baseline outside 0.51 +/- 0.02 micro-F1",
+          None if baseline is None else baseline["micro_f1"]["mean"],
+          None if baseline is None else not baseline["within_tolerance"])
+
+    agreement = items.loc[items["model"] == "M2", "ig_lime_spearman"].dropna() if "ig_lime_spearman" in items else []
+    median = float(np.median(agreement)) if len(agreement) else None
+    check(f"IG and LIME on M2: median Spearman below {MIN_IG_LIME_AGREEMENT}", median,
+          None if median is None else median < MIN_IG_LIME_AGREEMENT)
+
+    randomised = randomised_check(items)
+    check(f"IG does not degrade on a randomised head: median |Spearman| {RANDOMISED_MAX_AGREEMENT} or above",
+          None if randomised is None else randomised["median_abs_spearman"],
+          None if randomised is None else not randomised["degraded"])
+
+    rates = {}
+    if "M3" in logs:
+        rates["M3 joint"] = logs["M3"]["failure_rate"]
+    if "M2" in logs and logs["M2"]["decoupled_asked"]:
+        rates["M2 decoupled control"] = logs["M2"]["decoupled_failures"] / logs["M2"]["decoupled_asked"]
+    check(f"LLM parse failures above {MAX_PARSE_FAILURE:.0%} after retries", rates or None,
+          None if not rates else max(rates.values()) > MAX_PARSE_FAILURE)
+
+    for model in sorted(items["model"].unique()):
+        n_fp = int((items[items["model"] == model]["correctness"] == "FP").sum())
+        check(f"{model}: fewer than {MIN_FALSE_POSITIVES} false positives", n_fp, n_fp < MIN_FALSE_POSITIVES)
+
+    statuses = {c["status"] for c in checks}
+    overall = "inconclusive" if "triggered" in statuses else "incomplete" if "not run" in statuses else "clear"
+    return {"status": overall, "checks": checks}
+
+
+def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, micro_f1=None, baseline=None,
+        logs=None):
     """Score every record, then summarise. `embed` maps a list of texts to a list of vectors.
     Returns the items, the summary table, and the H1 and H3 results per model."""
     text_by_id = dict(zip(posts["post_id"], posts["text"]))
@@ -324,7 +371,8 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, m
     items = pd.DataFrame(rows)
     models = sorted(items["model"].unique())
     train_counts = symptom_counts(posts[posts["post_id"].isin(set(train_ids))]) if "labels" in posts else None
-    hypotheses = {"H1": [h1(items, m, boot=boot) for m in models if "plausibility" in items],
+    hypotheses = {"study": study_checks(items, baseline, logs),
+                  "H1": [h1(items, m, boot=boot) for m in models if "plausibility" in items],
                   "H2": [h2(items, boot=boot)],
                   "H3": [h3(items, m, train_counts, boot=boot) for m in models if "plausibility" in items],
                   "H4": [h4(items, micro_f1 or {}, boot)]}
@@ -342,27 +390,37 @@ def main():
     ap.add_argument("--nrc", default="data/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt")
     ap.add_argument("--m1-metrics", default="outputs/m1/metrics.json")
     ap.add_argument("--m2-summary", default="outputs/bert_baseline/summary.json", help="the five-seed mean")
+    ap.add_argument("--logs", default="outputs/records", help="where m2_log.json and m3_log.json are")
     args = ap.parse_args()
     micro_f1 = {}
     if Path(args.m1_metrics).exists():
         micro_f1["M1"] = json.loads(Path(args.m1_metrics).read_text())["micro_f1"]
-    if Path(args.m2_summary).exists():
-        micro_f1["M2"] = json.loads(Path(args.m2_summary).read_text())["micro_f1"]["mean"]
+    baseline = json.loads(Path(args.m2_summary).read_text()) if Path(args.m2_summary).exists() else None
+    if baseline:
+        micro_f1["M2"] = baseline["micro_f1"]["mean"]
+    logs = {m: json.loads((Path(args.logs) / f"{m.lower()}_log.json").read_text())
+            for m in ("M2", "M3") if (Path(args.logs) / f"{m.lower()}_log.json").exists()}
     boot = yaml.safe_load(Path(args.config).read_text())["bootstrap"]
 
     posts, ann = load(args.data)
     train, _ = split(posts)
     records = [json.loads(line) for path in args.records for line in Path(path).read_text().splitlines() if line]
-    items, summary, hypotheses = run(records, posts, ann, train["post_id"], embed, boot, load_nrc(args.nrc), micro_f1)
+    items, summary, hypotheses = run(records, posts, ann, train["post_id"], embed, boot, load_nrc(args.nrc), micro_f1,
+                                     baseline, logs)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     items.to_csv(out / "items.csv", index=False)
     summary.to_csv(out / "summary.csv", index=False)
     (out / "hypotheses.json").write_text(json.dumps(hypotheses, indent=2, default=float))
+    study = hypotheses["study"]
+    print(f"study: {study['status']}")
+    for c in study["checks"]:
+        print(f"  [{c['status']}] {c['condition']}: {c['value']}")
     for name, results in hypotheses.items():
-        for h in results:
-            print(f"{name} {h.get('model', 'all models')}: {h['verdict']}")
+        if name != "study":
+            for h in results:
+                print(f"{name} {h.get('model', 'all models')}: {h['verdict']}")
 
 
 if __name__ == "__main__":
