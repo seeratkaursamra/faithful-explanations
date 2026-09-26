@@ -1,4 +1,4 @@
-.PHONY: test inspect inspect-sample baseline baseline5 m1 m2 m3 m3-lime evaluate figures clean
+.PHONY: test inspect inspect-sample baseline baseline5 m1 m2 m3 m3-lime evaluate evaluate-minilm figures clean
 
 test:
 	python -m pytest -q tests
@@ -40,3 +40,7 @@ m2:
 
 evaluate:
 	python -m src.evaluate outputs/records/*.jsonl
+
+# the prereg's secondary embedding model, everything else the same
+evaluate-minilm:
+	python -m src.evaluate outputs/records/*.jsonl --embed-model all-minilm --out outputs/metrics_minilm

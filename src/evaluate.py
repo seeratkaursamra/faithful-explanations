@@ -115,6 +115,7 @@ def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=
             row[f"{method}_stated_jaccard_k2"] = jaccard(top_k(scores, 2), s_evid)
         if kind == "TP" and g_evid:
             row[f"{method}_gold_jaccard"] = jaccard(top_k(scores, len(g_evid)), g_evid)
+            row[f"{method}_gold_jaccard_k2"] = jaccard(top_k(scores, 2), g_evid)
         if sentences is not None and negative_words is not None:
             for marker, diff in density(sentences, top_k(scores, 2), negative_words).items():
                 row[f"{method}_density_{marker}"] = diff
@@ -425,6 +426,8 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, m
 
 
 def main():
+    from functools import partial
+
     from .llm import embed
 
     ap = argparse.ArgumentParser()
@@ -436,6 +439,8 @@ def main():
     ap.add_argument("--m1-metrics", default="outputs/m1/metrics.json")
     ap.add_argument("--m2-summary", default="outputs/bert_baseline/summary.json", help="the five-seed mean")
     ap.add_argument("--logs", default="outputs/records", help="where m2_log.json and m3_log.json are")
+    ap.add_argument("--embed-model", default="nomic-embed-text",
+                    help="all-minilm reruns everything with the prereg's secondary embedding model")
     args = ap.parse_args()
     micro_f1 = {}
     if Path(args.m1_metrics).exists():
@@ -450,13 +455,14 @@ def main():
     posts, ann = load(args.data)
     train, _ = split(posts)
     records = [json.loads(line) for path in args.records for line in Path(path).read_text().splitlines() if line]
-    items, summary, hypotheses = run(records, posts, ann, train["post_id"], embed, boot, load_nrc(args.nrc), micro_f1,
-                                     baseline, logs)
+    items, summary, hypotheses = run(records, posts, ann, train["post_id"], partial(embed, model=args.embed_model),
+                                     boot, load_nrc(args.nrc), micro_f1, baseline, logs)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     items.to_csv(out / "items.csv", index=False)
     summary.to_csv(out / "summary.csv", index=False)
+    hypotheses["embed_model"] = args.embed_model
     (out / "hypotheses.json").write_text(json.dumps(hypotheses, indent=2, default=float))
     study = hypotheses["study"]
     print(f"study: {study['status']}")

@@ -54,6 +54,7 @@ def test_score_a_true_positive():
     assert row["evidence_jaccard"] == pytest.approx(1 / 2)           # stated {0, 2} vs gold {0}
     assert row["IG_stated_jaccard"] == 1.0                            # top-2 of IG is {0, 2}
     assert row["IG_gold_jaccard"] == 1.0                              # top-1 of IG is {0}
+    assert row["IG_gold_jaccard_k2"] == pytest.approx(1 / 2)          # top-2 of IG is {0, 2}, gold is {0}
     assert row["comprehensiveness"] == 0.4
 
 
@@ -61,7 +62,7 @@ def test_score_a_false_positive_leaves_gold_metrics_undefined_not_zero():
     rec = record(gold=False, attribution={"IG": {"0": 0.9, "1": 0.1, "2": 0.5}})
     row = score(rec, g_evid=set(), g_text="", vectors={}, refs={})
     assert row["correctness"] == "FP"
-    assert "evidence_jaccard" not in row and "IG_gold_jaccard" not in row
+    assert "evidence_jaccard" not in row and "IG_gold_jaccard" not in row and "IG_gold_jaccard_k2" not in row
     # k = |S_evid| = 2, not |G_evid| = 0, so A-vs-S is measured on false positives too
     assert row["IG_stated_jaccard"] == 1.0
 
