@@ -11,9 +11,10 @@ from transformers import BertForSequenceClassification, BertTokenizer
 
 from . import lime_sentences
 from .attribution import explain as integrated_gradients
+from .attribution import randomised_head
 from .data import NO_SYMPTOMS, binarizer, check_against_paper, load, split
 from .llm import ask
-from .metrics import erasure
+from .metrics import erasure, rank_agreement
 from .run_m3 import numbered
 from .sentences import split as split_sentences
 from .sentences import texts, truncated
@@ -70,11 +71,12 @@ def decoupled(sentences, labels, prompts, ask_fn):
 
 
 def post_records(post_id, text, gold_labels, classes, predict, ig, explain_why, lime_cfg, threshold=0.5,
-                 seen=lambda text, spans: len(spans)):
+                 seen=lambda text, spans: len(spans), ig_random=None):
     """Harness records for one post. `predict` scores lists of sentences, `ig(text, spans, j)` gives IG
     sentence scores and the completeness gap for label j, `explain_why(sentences, labels)` is the
-    decoupled control, `seen(text, spans)` is how many sentences fit in BERT's window. Also returns
-    the decoupled result, or None when BERT predicted nothing.
+    decoupled control, `seen(text, spans)` is how many sentences fit in BERT's window, and `ig_random`,
+    when given, is IG on the randomised-head copy, for the sanity check. Also returns the decoupled
+    result, or None when BERT predicted nothing.
 
     For M2 the post is the sentences BERT sees. Past the cut, a sentence the control cited would
     erase to exactly 0 and IG could never rank it, which would score as unfaithfulness when BERT
@@ -99,6 +101,8 @@ def post_records(post_id, text, gold_labels, classes, predict, ig, explain_why, 
                   "sentences_seen": n_seen}
         if label in labels:
             ig_scores, record["ig_delta"] = ig(text, spans, j)
+            if ig_random is not None:
+                record["ig_random_spearman"] = rank_agreement(ig_scores, ig_random(text, spans, j)[0])
             lime_scores, record["lime_r2"] = lime_sentences.explain(sentences, lambda ps, j=j: predict(ps)[:, j],
                                                                     **lime_cfg)
             record["attribution"] = {"IG": {str(i): s for i, s in ig_scores.items()},
@@ -123,6 +127,7 @@ def main():
     ap.add_argument("--threshold", type=float, default=0.5)
     ap.add_argument("--limit", type=int, default=None, help="first N test posts only, for a trial run")
     ap.add_argument("--allow-mismatch", action="store_true", help="for the public sample")
+    ap.add_argument("--sanity", action="store_true", help="also IG on a randomised head (doubles IG time)")
     args = ap.parse_args()
 
     posts, _ = load(args.data)
@@ -148,10 +153,17 @@ def main():
     def seen(text, spans):
         return sentences_seen(text, spans, tokenizer)
 
+    ig_random = None
+    if args.sanity:
+        random = randomised_head(model, cfg["sanity"]["seed"])
+
+        def ig_random(text, spans, j):
+            return integrated_gradients(random, tokenizer, text, spans, j, **cfg["ig"])
+
     records, failed, asked = [], [], 0
     for row in test.itertuples():
         recs, result = post_records(row.post_id, row.text, row.labels, classes, predict, ig, explain_why,
-                                    cfg["lime"], args.threshold, seen)
+                                    cfg["lime"], args.threshold, seen, ig_random)
         records += recs
         if result is not None:
             asked += 1

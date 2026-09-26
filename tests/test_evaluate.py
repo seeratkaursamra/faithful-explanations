@@ -267,3 +267,13 @@ def test_gold_past_the_cut_is_reported_for_m2():
     row = score(record(model="M2", sentences_seen=2), g_evid={1, 2}, g_text="", vectors={}, refs={})
     assert row["gold_past_cut"] == pytest.approx(0.5)
     assert "gold_past_cut" not in score(record(), {0, 3}, "", {}, {})
+
+
+def test_randomised_check_uses_the_median_absolute_agreement():
+    from src.evaluate import randomised_check
+    # a reversed ranking (-0.9) is as much "not degraded" as a kept one: it is still the text's structure
+    kept = pd.DataFrame({"ig_random_spearman": [0.9, -0.9, 0.8, np.nan]})
+    assert randomised_check(kept) == {"n": 3, "median_abs_spearman": pytest.approx(0.9), "degraded": False}
+    fell_apart = pd.DataFrame({"ig_random_spearman": [0.1, -0.2, 0.3]})
+    assert randomised_check(fell_apart)["degraded"]
+    assert randomised_check(pd.DataFrame({"x": [1]})) is None

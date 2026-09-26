@@ -91,3 +91,17 @@ def test_explain_sentence_scores_keep_igs_completeness(tmp_path):
     tokens, _ = integrated_gradients(model, enc["input_ids"], enc["attention_mask"],
                                      baseline_ids(enc["input_ids"], tok), target=1, steps=20)
     assert sum(scores.values()) == pytest.approx(sum(tokens), abs=1e-6)
+
+
+def test_randomised_head_redraws_only_the_head_and_leaves_the_original_alone():
+    from src.attribution import randomised_head
+    model = tiny_bert()
+    before = {n: p.clone() for n, p in model.named_parameters()}
+    random = randomised_head(model, seed=1)
+    for name, p in random.named_parameters():
+        same = torch.equal(p, before[name])
+        assert same != name.startswith("classifier.weight"), name     # only the head's weights changed
+    assert torch.equal(random.classifier.bias, torch.zeros_like(random.classifier.bias))
+    assert all(torch.equal(p, before[n]) for n, p in model.named_parameters())   # the original is untouched
+    assert torch.equal(randomised_head(model, 1).classifier.weight, random.classifier.weight)   # seeded
+    assert abs(float(random.classifier.weight.detach().std()) - 0.02) < 0.01      # drawn at BERT's own scale

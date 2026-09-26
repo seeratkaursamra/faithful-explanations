@@ -1,4 +1,6 @@
 """Integrated Gradients over BERT's word embeddings, aggregated to my sentences."""
+import copy
+
 import torch
 
 from .metrics import sentence_scores
@@ -56,3 +58,16 @@ def explain(model, tokenizer, text, spans, target, max_len=512, steps=50, batch=
     tokens, delta = integrated_gradients(model, input_ids, attention_mask,
                                          baseline_ids(input_ids, tokenizer), target, steps, batch)
     return sentence_scores(tokens, token_sentences(text, spans, tokenizer, max_len)), delta
+
+
+def randomised_head(model, seed=0):
+    """A copy of the model with its classifier head re-drawn the way BERT first draws it, and every
+    other weight untouched. If IG gives much the same sentences on this copy, IG is reading the text,
+    not what was learned (Adebayo et al., 2018)."""
+    random = copy.deepcopy(model)
+    generator = torch.Generator().manual_seed(seed)
+    head = random.classifier
+    with torch.no_grad():
+        head.weight.copy_(torch.randn(head.weight.shape, generator=generator) * model.config.initializer_range)
+        head.bias.zero_()
+    return random

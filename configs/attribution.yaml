@@ -5,3 +5,5 @@ lime:
 ig:
   steps: 50
   batch: 10
+sanity:
+  seed: 0          # the draw of the randomised classifier head (Adebayo check)

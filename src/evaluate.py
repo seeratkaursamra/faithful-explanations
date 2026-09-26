@@ -11,6 +11,7 @@ Input is JSONL, one record per (model, post, symptom) that the model or the gold
   sufficiency                   probability drop in 0-1 when only stated_evidence is kept, or null
   ig_delta, lime_r2             optional: IG's completeness gap and LIME's local R-squared, reported as-is
   sentences_seen                optional, M2: how many leading sentences fit in BERT's window
+  ig_random_spearman            optional, M2: IG on the trained model against IG on a randomised head
 Sentence indices refer to src.sentences.split of the post. M3's 0-100 confidence is divided by 100
 before it gets here, so every model's erasure numbers share one scale.
 """
@@ -39,6 +40,10 @@ MIN_FALSE_POSITIVES = 30
 # Prereg H3: the gap should be wider for these than for suicidal thoughts.
 H3_TARGETS = ["PSYCHOMOTOR", "APPETITE_CHANGE", "COGNITIVE_ISSUES"]
 H3_REFERENCE = "SUICIDAL_THOUGHTS"
+
+# Randomised-model check: IG has degraded if trained and randomised-head sentence rankings agree
+# less than this, as a median of |Spearman|. The prereg names the check but not a number; see the log.
+RANDOMISED_MAX_AGREEMENT = 0.5
 
 # Bootstrap settings; the real values come from configs/evaluate.yaml, these match it.
 BOOT = {"n_resamples": 1000, "seed": 0}
@@ -72,7 +77,7 @@ def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=
            "correctness": kind, "n_gold": len(g_evid), "n_stated": len(s_evid) if stated is not None else np.nan,
            "comprehensiveness": record.get("comprehensiveness"), "sufficiency": record.get("sufficiency")}
     # how far to trust the attributions themselves: IG's completeness gap, LIME's local fit
-    for quality in ("ig_delta", "lime_r2"):
+    for quality in ("ig_delta", "lime_r2", "ig_random_spearman"):
         if record.get(quality) is not None:
             row[quality] = record[quality]
 
@@ -218,6 +223,18 @@ def h3_verdict(rows):
     if all(by[s]["did"][0] > reference for s in targets):
         return f"supported, on {', '.join(targets)}"
     return f"refuted, on {', '.join(targets)}"
+
+
+def randomised_check(items):
+    """Did IG fall apart when the classifier head was randomised? Median |Spearman| between the trained
+    and randomised rankings, over every item that has one. None when the check was not run."""
+    if "ig_random_spearman" not in items:
+        return None
+    rho = items["ig_random_spearman"].dropna().abs()
+    if not len(rho):
+        return None
+    median = float(rho.median())
+    return {"n": len(rho), "median_abs_spearman": median, "degraded": median < RANDOMISED_MAX_AGREEMENT}
 
 
 def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None):

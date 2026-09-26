@@ -136,3 +136,17 @@ def test_m2_never_hands_the_control_or_erasure_a_sentence_bert_cannot_see(tmp_pa
     # the visible prefix is scored exactly as the whole post: BERT never read the rest anyway
     full = predict([texts(LONG, split(LONG))])[0]
     assert records[0]["confidence"] == pytest.approx(full[CLASSES.index(records[0]["symptom"])])
+
+
+def test_sanity_check_compares_trained_and_randomised_ig_per_item(tmp_path):
+    from src.attribution import randomised_head
+    tok, predict, ig = pieces(tmp_path)
+    random = randomised_head(tiny_bert(len(CLASSES)), seed=3)
+    ig_random = lambda text, spans, j: integrated_gradients(random, tok, text, spans, j, steps=5)
+    records, _ = post_records("p1", TEXT, [], CLASSES, predict, ig, explains_everything([]), LIME,
+                              threshold=0.0, ig_random=ig_random)
+    assert all(-1.0 <= r["ig_random_spearman"] <= 1.0 for r in records)
+    # the model against itself agrees perfectly: the comparison is wired to the same item and label
+    records, _ = post_records("p1", TEXT, [], CLASSES, predict, ig, explains_everything([]), LIME,
+                              threshold=0.0, ig_random=ig)
+    assert all(r["ig_random_spearman"] == pytest.approx(1.0) for r in records)
