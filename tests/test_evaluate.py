@@ -260,3 +260,10 @@ def test_no_metric_name_turns_into_a_missing_value_in_the_csv(tmp_path):
     path = tmp_path / "names.csv"
     pd.DataFrame({"metric": list(row)}).to_csv(path, index=False)
     assert pd.read_csv(path)["metric"].notna().all()
+
+
+def test_gold_past_the_cut_is_reported_for_m2():
+    # 2 seen means sentences 0 and 1; sentence 2 is the first past the cut
+    row = score(record(model="M2", sentences_seen=2), g_evid={1, 2}, g_text="", vectors={}, refs={})
+    assert row["gold_past_cut"] == pytest.approx(0.5)
+    assert "gold_past_cut" not in score(record(), {0, 3}, "", {}, {})

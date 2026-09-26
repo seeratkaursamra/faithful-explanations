@@ -16,7 +16,7 @@ from .llm import ask
 from .metrics import erasure
 from .run_m3 import numbered
 from .sentences import split as split_sentences
-from .sentences import texts
+from .sentences import texts, truncated
 from .train_bert import pick_device
 
 
@@ -37,6 +37,13 @@ def bert_predict(model, tokenizer, device, max_len=512, batch=8):
                 rows.append(torch.sigmoid(model(**enc).logits).cpu().numpy())
         return np.concatenate(rows)
     return predict
+
+
+def sentences_seen(text, spans, tokenizer, max_len=512):
+    """How many sentences BERT sees at least part of. Truncation keeps the start of a post, so these
+    are always the first ones, and their indices are the same as in the whole post."""
+    cut = set(truncated(text, spans, tokenizer, max_len))
+    return next((i for i in range(len(spans)) if i in cut), len(spans))
 
 
 def remembered(predict):
@@ -62,12 +69,20 @@ def decoupled(sentences, labels, prompts, ask_fn):
     return {s["label"]: (s["evidence"], s["rationale"] or None) for s in result["symptoms"]}, result
 
 
-def post_records(post_id, text, gold_labels, classes, predict, ig, explain_why, lime_cfg, threshold=0.5):
+def post_records(post_id, text, gold_labels, classes, predict, ig, explain_why, lime_cfg, threshold=0.5,
+                 seen=lambda text, spans: len(spans)):
     """Harness records for one post. `predict` scores lists of sentences, `ig(text, spans, j)` gives IG
     sentence scores and the completeness gap for label j, `explain_why(sentences, labels)` is the
-    decoupled control. Also returns the decoupled result, or None when BERT predicted nothing."""
+    decoupled control, `seen(text, spans)` is how many sentences fit in BERT's window. Also returns
+    the decoupled result, or None when BERT predicted nothing.
+
+    For M2 the post is the sentences BERT sees. Past the cut, a sentence the control cited would
+    erase to exactly 0 and IG could never rank it, which would score as unfaithfulness when BERT
+    simply never read it. So the control, LIME and erasure all get only the visible sentences.
+    """
     spans = split_sentences(text)
-    sentences = texts(text, spans)
+    n_seen = seen(text, spans)
+    sentences = texts(text, spans)[:n_seen]
     predict = remembered(predict)
     probs = predict([sentences])[0]
     labels = [c for c, p in zip(classes, probs) if p > threshold and c != NO_SYMPTOMS]
@@ -80,7 +95,8 @@ def post_records(post_id, text, gold_labels, classes, predict, ig, explain_why, 
         j = classes.index(label)
         record = {"model": "M2", "post_id": post_id, "symptom": label, "predicted": label in labels,
                   "gold": label in gold_labels, "stated_evidence": None, "stated_rationale": None,
-                  "attribution": {}, "comprehensiveness": None, "sufficiency": None, "confidence": float(probs[j])}
+                  "attribution": {}, "comprehensiveness": None, "sufficiency": None, "confidence": float(probs[j]),
+                  "sentences_seen": n_seen}
         if label in labels:
             ig_scores, record["ig_delta"] = ig(text, spans, j)
             lime_scores, record["lime_r2"] = lime_sentences.explain(sentences, lambda ps, j=j: predict(ps)[:, j],
@@ -129,10 +145,13 @@ def main():
     def explain_why(sentences, labels):
         return decoupled(sentences, labels, prompts, ask)
 
+    def seen(text, spans):
+        return sentences_seen(text, spans, tokenizer)
+
     records, failed, asked = [], [], 0
     for row in test.itertuples():
         recs, result = post_records(row.post_id, row.text, row.labels, classes, predict, ig, explain_why,
-                                    cfg["lime"], args.threshold)
+                                    cfg["lime"], args.threshold, seen)
         records += recs
         if result is not None:
             asked += 1

@@ -103,3 +103,36 @@ def test_decoupled_tells_the_llm_the_labels_and_holds_it_to_them():
     assert stated == {"FATIGUE": ([1], "tired")}
     assert seen["prompt"] == "0: I sleep badly.\n1: Tired.\nLabels: FATIGUE"
     assert (seen["n"], seen["expected"]) == (2, ["FATIGUE"])
+
+
+LONG = "I cannot sleep. My appetite is gone. I am tired. I cannot sleep."   # 4 + 5 + 4 + 4 word tokens
+
+
+def test_sentences_seen_counts_the_prefix_inside_the_window(tmp_path):
+    from src.run_m2 import sentences_seen
+    tok = tokenizer(tmp_path)
+    spans = split(LONG)
+    assert sentences_seen(LONG, spans, tok, max_len=12) == 3        # 10 word tokens: all of 0, 1, part of 2
+    assert sentences_seen(LONG, spans, tok, max_len=512) == 4
+
+
+def test_m2_never_hands_the_control_or_erasure_a_sentence_bert_cannot_see(tmp_path):
+    from src.run_m2 import sentences_seen
+    tok, model = tokenizer(tmp_path), tiny_bert(len(CLASSES))
+    predict = bert_predict(model, tok, torch.device("cpu"), max_len=12)
+    ig = lambda text, spans, j: integrated_gradients(model, tok, text, spans, j, max_len=12, steps=5)
+    handed = []
+
+    def explain_why(sentences, labels):
+        handed.append(list(sentences))
+        return {label: ([len(sentences) - 1], "last one") for label in labels}, {"ok": True}
+
+    records, _ = post_records("p1", LONG, [], CLASSES, predict, ig, explain_why, LIME, threshold=0.0,
+                              seen=lambda text, spans: sentences_seen(text, spans, tok, max_len=12))
+    assert handed == [texts(LONG, split(LONG))[:3]]                 # the fourth sentence is past the cut
+    for r in records:
+        assert r["sentences_seen"] == 3 and set(r["attribution"]["LIME"]) == {"0", "1", "2"}
+        assert r["stated_evidence"] == [2] and r["comprehensiveness"] is not None
+    # the visible prefix is scored exactly as the whole post: BERT never read the rest anyway
+    full = predict([texts(LONG, split(LONG))])[0]
+    assert records[0]["confidence"] == pytest.approx(full[CLASSES.index(records[0]["symptom"])])

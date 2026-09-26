@@ -10,6 +10,7 @@ Input is JSONL, one record per (model, post, symptom) that the model or the gold
   comprehensiveness             probability drop in 0-1 when stated_evidence is removed, or null
   sufficiency                   probability drop in 0-1 when only stated_evidence is kept, or null
   ig_delta, lime_r2             optional: IG's completeness gap and LIME's local R-squared, reported as-is
+  sentences_seen                optional, M2: how many leading sentences fit in BERT's window
 Sentence indices refer to src.sentences.split of the post. M3's 0-100 confidence is divided by 100
 before it gets here, so every model's erasure numbers share one scale.
 """
@@ -82,6 +83,10 @@ def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=
         row["null_similarity"] = symptom_null(v, refs, record["symptom"])
         if kind == "TP" and g_text:
             row["own_similarity"] = cosine(v, vectors[g_text])
+
+    # M2 only: how much of the psychologist's evidence lies past BERT's 512-token cut, out of its reach
+    if record.get("sentences_seen") is not None and g_evid:
+        row["gold_past_cut"] = sum(i >= record["sentences_seen"] for i in g_evid) / len(g_evid)
 
     if kind == "TP" and stated is not None and g_evid:
         row["evidence_jaccard"] = jaccard(s_evid, g_evid)
