@@ -60,9 +60,11 @@ The full dataset has not arrived, so nothing has been run on real data yet.
 - `src/run_m2.py` - M2 over the test split from the seed-0 checkpoint: IG and LIME on predicted symptoms, the
   decoupled control explaining BERT's labels (held to them), and erasure on BERT of what it cites.
 - `src/train_bert.py` - the baseline, hyperparameters from the config, seeds and device handling.
-- `src/inspect_data.py`, `src/figures.py` - stats + hand-reading batch, and the pipeline figure.
-- `configs/bert_baseline.yaml`, `configs/prompts.yaml`, `configs/evaluate.yaml` - training recipe, the M3 prompts,
-  and the bootstrap settings
+- `src/inspect_data.py` - stats, the gold-alignment rate, the first-person/tense check, and a hand-reading batch.
+- `src/figures.py` - Fig 1 (pipeline) always; Figs 2-5 and Tables 1-3 from a finished harness run.
+- `src/cases.py` - the qualitative cases by a fixed rule; `cases.md` quotes posts and stays in outputs/.
+- `configs/bert_baseline.yaml`, `configs/prompts.yaml`, `configs/evaluate.yaml`, `configs/attribution.yaml` -
+  training recipe, the M3 prompts, the bootstrap settings, and LIME / IG / randomised-head settings
   (joint, decoupled control, label-only for LIME perturbations).
 
 ## Data
@@ -86,7 +88,9 @@ make test                                                  # pytest over tests/
 make inspect | inspect-sample                              # full data | public sample
 make baseline | baseline5                                  # one seed | five seeds + summary.json
 make m1                                                    # M1; needs the NRC file in data/
-make m2 | m3 | evaluate                                    # M2 records | M3 records (both need ollama) | the harness
+make m2 | m3 | m3-lime                                     # records for M2 | M3 | M3 with LIME (overnight); need ollama
+make evaluate | evaluate-minilm                            # the harness | rerun with the secondary embedding model
+make cases | figures                                       # qualitative cases (private) | figures and tables
 make figures                                               # regenerate figures/ (gitignored)
 python -m pytest tests/test_metrics.py::test_jaccard -q     # a single test
 ```

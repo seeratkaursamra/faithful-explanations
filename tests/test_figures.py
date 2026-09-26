@@ -56,3 +56,14 @@ def test_every_figure_and_table_is_written_from_a_harness_run(tmp_path):
         assert (tmp_path / "out" / f"{name}.pdf").stat().st_size > 0
         assert (tmp_path / "out" / f"{name}.png").stat().st_size > 0
     assert (tmp_path / "out" / "table1_classification.csv").exists() and len(written) == 6
+
+
+def test_table3_keeps_only_annotated_cases_and_never_any_text_column():
+    from src.figures import TABLE3_COLUMNS, cases_table
+    cases = pd.DataFrame({"model": ["M3", "M3"], "symptom": ["SLEEP_ISSUES", "FATIGUE"], "correctness": ["FP", "TP"],
+                          "plausibility": [0.8, 0.7], "comprehensiveness": [0.0, 0.0],
+                          "reading": ["topic match without evidence", "  "],
+                          "post_text": ["a quoted post that must never reach the paper", "another"]})
+    table = cases_table(cases)
+    assert list(table.columns) == TABLE3_COLUMNS
+    assert len(table) == 1 and table.iloc[0]["symptom"] == "Sleep issues"

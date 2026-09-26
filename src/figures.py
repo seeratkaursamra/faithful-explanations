@@ -316,6 +316,16 @@ def explanation_table(summary):
     return pd.DataFrame(rows)
 
 
+TABLE3_COLUMNS = ["model", "symptom", "correctness", "plausibility", "comprehensiveness", "reading"]
+
+
+def cases_table(cases):
+    """Table 3: the qualitative cases with the reading written into cases.csv. Only these columns, so
+    nothing quoted from a post can reach the paper even if the CSV grew one."""
+    done = cases[cases["reading"].fillna("").str.strip() != ""]
+    return done[TABLE3_COLUMNS].assign(symptom=done["symptom"].map(_nice)).reset_index(drop=True)
+
+
 def latex(table, caption, label):
     """A booktabs table for the paper. Hand-built to keep the dependencies to what is pinned."""
     esc = lambda x: str(x).replace("_", r"\_").replace("%", r"\%")
@@ -328,8 +338,9 @@ def latex(table, caption, label):
     return "\n".join(lines) + "\n"
 
 
-def results(metrics_dir, out, boot=BOOT):
-    """Figures 2-5 and Tables 1-2 from a finished harness run (items.csv, summary.csv, hypotheses.json)."""
+def results(metrics_dir, out, boot=BOOT, cases_csv=None):
+    """Figures 2-5 and Tables 1-2 from a finished harness run (items.csv, summary.csv, hypotheses.json),
+    and Table 3 once cases.csv has readings in it."""
     metrics_dir, out = Path(metrics_dir), Path(out)
     items = pd.read_csv(metrics_dir / "items.csv")
     summary = pd.read_csv(metrics_dir / "summary.csv")
@@ -338,11 +349,17 @@ def results(metrics_dir, out, boot=BOOT):
                symptom_figure(hypotheses, out / "fig3_symptoms.pdf"),
                accuracy_figure(items, hypotheses, out / "fig4_accuracy.pdf"),
                sanity_figure(items, out / "fig5_sanity.pdf")]
-    for name, table, caption in [
-            ("table1_classification", classification_table(items, boot),
-             "Classification on the test split, per symptom, with a 95% post-level interval for F1."),
-            ("table2_explanations", explanation_table(summary),
-             "Plausibility and faithfulness on correct and wrong predictions, with 95% post-level intervals.")]:
+    tables = [("table1_classification", classification_table(items, boot),
+               "Classification on the test split, per symptom, with a 95% post-level interval for F1."),
+              ("table2_explanations", explanation_table(summary),
+               "Plausibility and faithfulness on correct and wrong predictions, with 95% post-level intervals.")]
+    if cases_csv and Path(cases_csv).exists():
+        table3 = cases_table(pd.read_csv(cases_csv))
+        if len(table3):
+            tables.append(("table3_cases", table3,
+                           "Plausible but unfaithful explanations: the most plausible of each model's lowest-faithfulness "
+                           "quarter, with a reading of why the explanation convinces. Exploratory."))
+    for name, table, caption in tables:
         table.to_csv(out / f"{name}.csv", index=False)
         (out / f"{name}.tex").write_text(latex(table, caption, f"tab:{name.split('_')[0]}"))
         written.append(out / f"{name}.tex")
@@ -354,11 +371,12 @@ if __name__ == "__main__":
     ap.add_argument("--out", default="figures")
     ap.add_argument("--metrics", default="outputs/metrics", help="a finished harness run, for figures 2-5")
     ap.add_argument("--config", default="configs/evaluate.yaml")
+    ap.add_argument("--cases", default="outputs/qualitative/cases.csv", help="annotated cases, for Table 3")
     args = ap.parse_args()
     print("wrote", pipeline(f"{args.out}/fig1_pipeline.pdf"))
     if (Path(args.metrics) / "hypotheses.json").exists():
         boot = yaml.safe_load(Path(args.config).read_text())["bootstrap"]
-        for path in results(args.metrics, args.out, boot):
+        for path in results(args.metrics, args.out, boot, args.cases):
             print("wrote", path)
     else:
         print(f"no harness run in {args.metrics}; figures 2-5 need `make evaluate` first")

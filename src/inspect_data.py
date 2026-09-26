@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 
 from .data import NO_SYMPTOMS, SYMPTOMS, check_against_paper, load, split, symptom_counts
+from .lexicon import markers
+from .sentences import split as split_sentences
 from .sentences import alignment_report
 
 # posts per symptom in the hand-reading batch, weighted toward the classes I care most about
@@ -34,6 +36,13 @@ def describe(posts, ann):
         # rough: 400 words is usually past 512 wordpieces, so these posts get truncated by BERT
         "posts_over_400_words": int((posts["n_words"] > 400).sum()),
     }
+    n_sentences = [len(split_sentences(t)) for t in posts["text"].fillna("")]
+    stats["sentences_per_post"] = {"mean": float(np.mean(n_sentences)), "median": float(np.median(n_sentences)),
+                                   "max": int(max(n_sentences))}
+    # the ReDSM5 paper's own check: symptom posts lean on "I" and the present tense
+    rates = pd.DataFrame([markers(t, set()) for t in posts["text"].fillna("")])
+    stats["markers"] = {group: {k: float(rates.loc[mask.values, k].mean()) for k in ("first_person", "present_tense")}
+                        for group, mask in (("with_symptoms", ~posts["is_negative"]), ("negatives", posts["is_negative"]))}
     co = pd.DataFrame(0, index=SYMPTOMS, columns=SYMPTOMS)
     for labs in posts["labels"]:
         labs = [lab for lab in labs if lab != NO_SYMPTOMS]
@@ -86,6 +95,11 @@ def main():
     print(f"posts={stats['posts']} negatives={stats['negatives']} annotation_rows={stats['annotation_rows']} "
           f"(status1={stats['annotation_rows_status1']}, status0={stats['annotation_rows_status0']})")
     print(f"train/test = {stats['split']['train']}/{stats['split']['test']}")
+    s, m = stats["sentences_per_post"], stats["markers"]
+    print(f"sentences per post: mean {s['mean']:.1f}, median {s['median']:.0f}, max {s['max']}")
+    print(f"first person / present tense: symptom posts {m['with_symptoms']['first_person']:.3f} / "
+          f"{m['with_symptoms']['present_tense']:.2f}, negatives {m['negatives']['first_person']:.3f} / "
+          f"{m['negatives']['present_tense']:.2f}")
     print("symptom counts (ours vs paper):")
     for s, (ours, paper) in check["symptom_counts"].items():
         print(f"  {s:<18} {ours:>5} vs {paper:>5}{'' if ours == paper else '  <-- MISMATCH'}")

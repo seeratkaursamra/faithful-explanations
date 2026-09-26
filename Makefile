@@ -1,4 +1,4 @@
-.PHONY: test inspect inspect-sample baseline baseline5 m1 m2 m3 m3-lime evaluate evaluate-minilm figures clean
+.PHONY: test inspect inspect-sample baseline baseline5 m1 m2 m3 m3-lime evaluate evaluate-minilm cases figures clean
 
 test:
 	python -m pytest -q tests
@@ -9,6 +9,10 @@ inspect:
 # same thing on the public 25-row sample, where a mismatch with the paper is expected
 inspect-sample:
 	python -m src.inspect_data --data data --allow-mismatch --reading-sample docs/reading_sample.md
+
+# plausible-but-unfaithful cases for reading by hand; cases.md quotes posts and stays in outputs/
+cases:
+	python -m src.cases outputs/records/*.jsonl
 
 figures:
 	python -m src.figures
