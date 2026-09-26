@@ -84,8 +84,7 @@ The full dataset has not arrived, so nothing has been run on real data yet.
 
 ## Commands
 ```bash
-python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
-python -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger_eng')"
+python3 -m venv venv && source venv/bin/activate && make setup   # packages, NLTK data, the Ollama models
 make test                                                  # pytest over tests/
 make inspect | inspect-sample                              # full data | public sample
 make baseline | baseline5 | svm                            # one seed | five seeds + summary.json | the authors' SVM

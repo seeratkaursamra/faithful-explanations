@@ -1,4 +1,13 @@
-.PHONY: test inspect inspect-sample baseline baseline5 svm m1 m2 m3 m3-lime evaluate evaluate-minilm cases figures clean
+.PHONY: setup test inspect inspect-sample baseline baseline5 svm m1 m2 m3 m3-lime evaluate evaluate-minilm cases figures clean
+
+# everything installable in one go, inside an active venv; the Ollama pulls need `ollama serve` running.
+# The NRC lexicon (licence terms) and ReDSM5 (gated) have to be fetched by hand; see the README.
+setup:
+	pip install -r requirements.txt
+	python -c "import nltk; nltk.download('punkt_tab', quiet=True); nltk.download('averaged_perceptron_tagger_eng', quiet=True)"
+	ollama pull qwen2.5:7b
+	ollama pull nomic-embed-text
+	ollama pull all-minilm
 
 test:
 	python -m pytest -q tests
@@ -6,7 +15,7 @@ test:
 inspect:
 	python -m src.inspect_data --data data --reading-sample docs/reading_sample.md
 
-# same thing on the public 25-row sample, where a mismatch with the paper is expected
+# same thing on the public sample (17 posts, 25 annotation rows), where a mismatch with the paper is expected
 inspect-sample:
 	python -m src.inspect_data --data data --allow-mismatch --reading-sample docs/reading_sample.md
 
@@ -38,13 +47,15 @@ m1:
 m3:
 	python -m src.run_m3
 
-# the overnight job: LIME on every M3 prediction; raise OLLAMA_NUM_PARALLEL and --workers to match
+# the overnight job: rewrites m3.jsonl with the same records plus LIME (the joint and erasure calls come
+# back from the cache); raise OLLAMA_NUM_PARALLEL and --workers to match
 m3-lime:
-	python -m src.run_m3 --lime --out outputs/records/m3_lime
+	python -m src.run_m3 --lime
 
-# needs a trained seed-0 checkpoint (make baseline) and `ollama serve` for the decoupled control
+# needs a trained seed-0 checkpoint (make baseline) and `ollama serve` for the decoupled control;
+# --sanity runs the randomised-head check, one of the prereg's conditions for an inconclusive study
 m2:
-	python -m src.run_m2
+	python -m src.run_m2 --sanity
 
 evaluate:
 	python -m src.evaluate outputs/records/*.jsonl
