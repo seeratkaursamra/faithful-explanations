@@ -231,3 +231,10 @@ def test_resample_posts_keeps_every_row_of_a_drawn_post():
     for rows in resample_posts(posts, n_resamples=50, seed=0):
         drawn = [posts[r] for r in rows]
         assert drawn.count("a") % 2 == 0          # a's two rows always come together
+
+
+def test_agreement_counts_two_empty_answers_as_full_agreement():
+    from src.metrics import agreement
+    assert agreement(set(), set()) == 1.0
+    assert agreement({"A"}, {"A", "B"}) == pytest.approx(0.5)
+    assert agreement({"A"}, set()) == 0.0

@@ -11,7 +11,7 @@ import yaml
 from . import lime_sentences
 from .data import NO_SYMPTOMS, check_against_paper, load, split
 from .llm import ask
-from .metrics import erasure, jaccard
+from .metrics import agreement, erasure
 from .sentences import split as split_sentences
 from .sentences import texts
 
@@ -85,11 +85,6 @@ def post_records(post_id, text, gold_labels, prompts, ask_fn, lime_cfg=None):
     return records, result
 
 
-def _agree(a, b):
-    """Jaccard, except that two runs both saying "nothing" agree completely."""
-    return 1.0 if not a and not b else jaccard(a, b)
-
-
 def stability(runs, post_ids):
     """Mean pairwise agreement between runs of the same posts: of the predicted label sets per post,
     and of the cited evidence per (post, symptom) that both runs predicted."""
@@ -102,8 +97,8 @@ def stability(runs, post_ids):
                 evidence[i][(r["post_id"], r["symptom"])] = set(r["stated_evidence"] or [])
     label_scores, evidence_scores = [], []
     for a, b in combinations(range(len(runs)), 2):
-        label_scores += [_agree(labels[a][p], labels[b][p]) for p in post_ids]
-        evidence_scores += [_agree(evidence[a][k], evidence[b][k]) for k in evidence[a].keys() & evidence[b].keys()]
+        label_scores += [agreement(labels[a][p], labels[b][p]) for p in post_ids]
+        evidence_scores += [agreement(evidence[a][k], evidence[b][k]) for k in evidence[a].keys() & evidence[b].keys()]
     mean = lambda xs: sum(xs) / len(xs) if xs else float("nan")
     return {"labels": mean(label_scores), "evidence": mean(evidence_scores),
             "n_posts": len(post_ids), "n_shared_predictions": len(evidence_scores)}

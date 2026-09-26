@@ -150,3 +150,21 @@ def test_sanity_check_compares_trained_and_randomised_ig_per_item(tmp_path):
     records, _ = post_records("p1", TEXT, [], CLASSES, predict, ig, explains_everything([]), LIME,
                               threshold=0.0, ig_random=ig)
     assert all(r["ig_random_spearman"] == pytest.approx(1.0) for r in records)
+
+
+def m2_record(post, symptom, ig, lime):
+    return {"post_id": post, "symptom": symptom, "predicted": True,
+            "attribution": {"IG": {str(i): s for i, s in enumerate(ig)}, "LIME": {str(i): s for i, s in enumerate(lime)}}}
+
+
+def test_seed_check_compares_labels_per_post_and_attributions_on_shared_items():
+    from src.run_m2 import seed_check
+    seed0 = [m2_record("p1", "FATIGUE", [0.9, 0.5, 0.1], [0.8, 0.6, 0.0]),
+             m2_record("p1", "SLEEP_ISSUES", [0.1, 0.2, 0.3], [0.1, 0.2, 0.3])]
+    seed1 = [m2_record("p1", "FATIGUE", [0.1, 0.5, 0.9], [0.7, 0.5, 0.1])]      # IG reversed, LIME kept
+    out = seed_check(seed0, seed1, ["p1", "p2"])
+    # p1: {FATIGUE, SLEEP} vs {FATIGUE} = 0.5; p2: neither seed predicts anything = 1.0
+    assert out["labels"] == pytest.approx(0.75)
+    assert out["n_shared_predictions"] == 1                      # only FATIGUE on p1 is in both
+    assert out["IG_median_spearman"] == pytest.approx(-1.0) and out["IG_top2_jaccard"] == pytest.approx(1 / 3)
+    assert out["LIME_median_spearman"] == pytest.approx(1.0) and out["LIME_top2_jaccard"] == 1.0

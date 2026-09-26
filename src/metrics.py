@@ -13,6 +13,11 @@ def jaccard(a, b):
     return len(a & b) / len(a | b)
 
 
+def agreement(a, b):
+    """Jaccard for comparing two runs, except that both saying "nothing" is full agreement."""
+    return 1.0 if not set(a) and not set(b) else jaccard(a, b)
+
+
 def precision_recall_f1(retrieved, relevant):
     """Treat the gold set as relevant and the model's cited set as retrieved."""
     retrieved, relevant = set(retrieved), set(relevant)

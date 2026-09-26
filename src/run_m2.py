@@ -14,7 +14,7 @@ from .attribution import explain as integrated_gradients
 from .attribution import randomised_head
 from .data import NO_SYMPTOMS, binarizer, check_against_paper, load, split
 from .llm import ask
-from .metrics import erasure, rank_agreement
+from .metrics import agreement, erasure, jaccard, rank_agreement, top_k
 from .run_m3 import numbered
 from .sentences import split as split_sentences
 from .sentences import texts, truncated
@@ -116,6 +116,31 @@ def post_records(post_id, text, gold_labels, classes, predict, ig, explain_why, 
     return records, result
 
 
+def seed_check(run_a, run_b, post_ids):
+    """The prereg's check of seed 0 against another seed, on the same test posts. Label agreement per
+    post, then, for the (post, symptom) items both seeds predicted, how far IG and LIME agree: median
+    Spearman of the sentence scores and mean overlap of the top two sentences."""
+    predicted = [{}, {}]
+    labels = [{p: set() for p in post_ids} for _ in range(2)]
+    for i, records in enumerate([run_a, run_b]):
+        for r in records:
+            if r["predicted"]:
+                labels[i][r["post_id"]].add(r["symptom"])
+                predicted[i][(r["post_id"], r["symptom"])] = r["attribution"]
+    shared = predicted[0].keys() & predicted[1].keys()
+    out = {"n_posts": len(post_ids), "n_shared_predictions": len(shared),
+           "labels": float(np.mean([agreement(labels[0][p], labels[1][p]) for p in post_ids]))}
+    for method in ("IG", "LIME"):
+        pairs = [({int(k): v for k, v in predicted[0][key][method].items()},
+                  {int(k): v for k, v in predicted[1][key][method].items()})
+                 for key in shared if predicted[0][key].get(method) and predicted[1][key].get(method)]
+        rho = [r for r in (rank_agreement(x, y) for x, y in pairs) if not np.isnan(r)]
+        out[f"{method}_median_spearman"] = float(np.median(rho)) if rho else None
+        out[f"{method}_top2_jaccard"] = float(np.mean([jaccard(top_k(x, 2), top_k(y, 2)) for x, y in pairs])) \
+            if pairs else None
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", default="outputs/bert_baseline/seed0/checkpoint",
@@ -128,6 +153,7 @@ def main():
     ap.add_argument("--limit", type=int, default=None, help="first N test posts only, for a trial run")
     ap.add_argument("--allow-mismatch", action="store_true", help="for the public sample")
     ap.add_argument("--sanity", action="store_true", help="also IG on a randomised head (doubles IG time)")
+    ap.add_argument("--seed-check", nargs=2, metavar="JSONL", help="compare two finished runs (seed 0, seed 1)")
     args = ap.parse_args()
 
     posts, _ = load(args.data)
@@ -135,6 +161,13 @@ def main():
         raise SystemExit("data does not match the paper, refusing to run")
     _, test = split(posts)
     test = test.head(args.limit) if args.limit else test
+
+    if args.seed_check:
+        # posts from the split, not the records: a post both seeds leave empty writes no records
+        runs = [[json.loads(l) for l in Path(f).read_text().splitlines() if l] for f in args.seed_check]
+        print(json.dumps(seed_check(runs[0], runs[1], list(test.post_id)), indent=2))
+        return
+
     classes = list(binarizer(posts).classes_)
     cfg = yaml.safe_load(Path(args.config).read_text())
     prompts = yaml.safe_load(Path(args.prompts).read_text())
