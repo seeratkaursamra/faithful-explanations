@@ -91,3 +91,21 @@ def test_records_cover_predicted_and_gold_and_nothing_else():
     sleep = next(r for r in recs if r["symptom"] == "SLEEP_ISSUES" and r["post_id"] == "a")
     assert set(sleep["attribution"]["M1"]) == {"0", "1"}      # one score per sentence, keyed as JSON keeps it
     assert sleep["stated_evidence"] is None and sleep["comprehensiveness"] is None
+
+
+def test_m1_run_records_its_runtime(tmp_path, monkeypatch):
+    import json
+    import sys
+
+    from src import m1
+    from src.data import load as load_data
+    nrc = tmp_path / "nrc.txt"
+    nrc.write_text("afraid\tfear\t1\n")
+    monkeypatch.setattr(sys, "argv", ["m1", "--allow-mismatch", "--nrc", str(nrc), "--out", str(tmp_path / "out"),
+                                      "--records", str(tmp_path / "records")])
+    # the public sample even once the real data is in data/, as every test must
+    monkeypatch.setattr(m1, "load", lambda data_dir: load_data(data_dir, sample=True))
+    m1.main()
+    seconds = json.loads((tmp_path / "out" / "metrics.json").read_text())["seconds"]
+    assert set(seconds) == {"fit", "predict_and_explain"} and all(v >= 0 for v in seconds.values())
+    assert (tmp_path / "records" / "m1.jsonl").exists()

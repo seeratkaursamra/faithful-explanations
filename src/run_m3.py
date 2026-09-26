@@ -1,6 +1,7 @@
 """M3 on the test split: the joint answer, then erasure with the same prompt, written as harness records."""
 import argparse
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import combinations
@@ -14,6 +15,18 @@ from .llm import ask
 from .metrics import agreement, erasure
 from .sentences import split as split_sentences
 from .sentences import texts
+
+
+def counting(fn):
+    """fn, keeping a count of its calls in `.calls`: the run log's measure of how much the model was asked.
+    A list, because appending is safe when several threads call at once."""
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return fn(*args, **kwargs)
+    counted.calls = calls
+    return counted
 
 
 def numbered(sentences):
@@ -134,12 +147,15 @@ def main():
         return
     prompts = yaml.safe_load(Path(args.prompts).read_text())
 
-    def one(row):
-        return post_records(row.post_id, row.text, row.labels, prompts,
-                            partial(ask, seed=args.seed, temperature=args.temperature), lime_cfg)
+    asked = counting(partial(ask, seed=args.seed, temperature=args.temperature))
 
+    def one(row):
+        return post_records(row.post_id, row.text, row.labels, prompts, asked, lime_cfg)
+
+    start = time.time()
     with ThreadPoolExecutor(args.workers) as pool:
         results = list(pool.map(one, test.itertuples()))
+    seconds = time.time() - start
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -149,14 +165,18 @@ def main():
                 f.write(json.dumps(r) + "\n")
     failed = [pid for pid, (_, r) in zip(test.post_id, results) if not r["ok"]]
     log = {"posts": len(test), "parse_failures": len(failed), "failure_rate": len(failed) / len(test),
-           "failed_posts": failed, "retried": sum(r["attempts"] > 1 for _, r in results)}
+           "failed_posts": failed, "retried": sum(r["attempts"] > 1 for _, r in results),
+           # the model runs locally, so its cost is time; cached replies return in milliseconds
+           "questions_asked": len(asked.calls), "workers": args.workers, "lime": args.lime,
+           "seconds": round(seconds, 1), "seconds_per_post": round(seconds / len(test), 2)}
     if args.lime:
         lime = [r for records, _ in results for r in records if "lime_unscored" in r]
         log["lime_explained"] = len(lime)
         log["lime_unscored_perturbations"] = sum(r["lime_unscored"] for r in lime)
     (out / "m3_log.json").write_text(json.dumps(log, indent=2))
     print(f"{sum(len(r) for r, _ in results)} records from {len(test)} posts; "
-          f"parse failures {len(failed)} ({log['failure_rate']:.1%}, prereg limit 10%)")
+          f"parse failures {len(failed)} ({log['failure_rate']:.1%}, prereg limit 10%); "
+          f"{log['questions_asked']} questions in {log['seconds']}s")
 
 
 if __name__ == "__main__":

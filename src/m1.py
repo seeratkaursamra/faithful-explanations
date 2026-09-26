@@ -1,6 +1,7 @@
 """M1: one logistic regression per label on TF-IDF n-grams plus the depression markers, explained exactly."""
 import argparse
 import json
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -117,17 +118,20 @@ def main():
     train_df, test_df = split(posts)
     mlb = binarizer(posts)
     classes = list(mlb.classes_)
+    start = time.time()
     model = fit(train_df["text"].tolist(), mlb.transform(train_df["labels"]), classes, load_nrc(args.nrc))
+    fitted = time.time()
     probs = predict_proba(model, test_df["text"].tolist())
+    recs = records(model, test_df, probs, args.threshold)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     m = metrics(mlb.transform(test_df["labels"]), probs, classes, args.threshold)
-    m.update({"n_train": len(train_df), "n_test": len(test_df), "classes": classes})
+    m.update({"n_train": len(train_df), "n_test": len(test_df), "classes": classes,
+              "seconds": {"fit": round(fitted - start, 1), "predict_and_explain": round(time.time() - fitted, 1)}})
     (out / "metrics.json").write_text(json.dumps(m, indent=2))
     pd.DataFrame(probs, columns=classes).assign(post_id=test_df["post_id"].values) \
         .to_csv(out / "test_probs.csv", index=False)
-    recs = records(model, test_df, probs, args.threshold)
     Path(args.records).mkdir(parents=True, exist_ok=True)
     (Path(args.records) / "m1.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
     print(f"M1 micro-F1 {m['micro_f1']:.3f}  macro-F1 {m['macro_f1']:.3f}  (written to {out}); "

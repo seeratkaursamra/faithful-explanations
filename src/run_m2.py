@@ -2,6 +2,7 @@
 and erasure on BERT of the sentences that rationale cites, written as harness records."""
 import argparse
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -194,6 +195,7 @@ def main():
             return integrated_gradients(random, tokenizer, text, spans, j, **cfg["ig"])
 
     records, failed, asked = [], [], 0
+    start = time.time()
     for row in test.itertuples():
         recs, result = post_records(row.post_id, row.text, row.labels, classes, predict, ig, explain_why,
                                     cfg["lime"], args.threshold, seen, ig_random)
@@ -208,10 +210,11 @@ def main():
     deltas = [abs(r["ig_delta"]) for r in records if "ig_delta" in r]
     log = {"posts": len(test), "decoupled_asked": asked, "decoupled_failures": len(failed), "failed_posts": failed,
            "ig_delta_max": max(deltas, default=None), "ig_delta_median": float(np.median(deltas)) if deltas else None,
-           "checkpoint": args.checkpoint}
+           "checkpoint": args.checkpoint, "device": str(device), "sanity": args.sanity,
+           "seconds": round(time.time() - start, 1), "seconds_per_post": round((time.time() - start) / len(test), 2)}
     (out / "m2_log.json").write_text(json.dumps(log, indent=2))
     print(f"{len(records)} records from {len(test)} posts; decoupled failures {len(failed)} of {asked}; "
-          f"largest IG completeness gap {log['ig_delta_max']}")
+          f"largest IG completeness gap {log['ig_delta_max']}; {log['seconds']}s on {device}")
 
 
 if __name__ == "__main__":

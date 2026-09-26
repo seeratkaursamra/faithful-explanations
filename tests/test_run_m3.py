@@ -149,3 +149,10 @@ def test_lime_off_by_default_and_failed_perturbations_are_counted():
     sleep = next(r for r in records if r["symptom"] == "SLEEP_ISSUES")
     assert sleep["lime_unscored"] > 0
     assert max(sleep["attribution"]["LIME"], key=sleep["attribution"]["LIME"].get) == "0"
+
+
+def test_counting_counts_every_call_and_passes_everything_through():
+    from src.run_m3 import counting
+    counted = counting(lambda a, b=0: a + b)
+    assert counted(1, b=2) == 3 and counted(5) == 5
+    assert len(counted.calls) == 2
