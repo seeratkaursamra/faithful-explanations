@@ -429,3 +429,37 @@ def test_ig_lime_agreement_is_judged_on_m2_alone():
     other = study_items(ig_lime=-0.9).assign(model="MX")
     result = study_checks(pd.concat([study_items(), other, other]), BASELINE_OK, LOGS_OK)
     assert status_of(result, "IG and LIME") == "clear"
+
+
+# --- paired contrasts ------------------------------------------------------------------------------------
+
+def test_ig_minus_lime_is_paired_on_the_same_m2_items():
+    from src.evaluate import method_contrasts
+    items = pd.DataFrame([{"model": "M2", "post_id": f"p{i}", "symptom": "FATIGUE", "correctness": "TP",
+                           "IG_stated_jaccard": 0.5 + 0.05 * i, "LIME_stated_jaccard": 0.3 + 0.05 * i,
+                           "IG_gold_jaccard": 0.4} for i in range(12)])
+    rows = {r["metric"]: r for r in method_contrasts(items, {"n_resamples": 200, "seed": 0})}
+    # every item differs by exactly 0.2, so a paired interval collapses on it even though levels vary
+    assert rows["stated_jaccard"]["diff"] == pytest.approx(0.2)
+    assert rows["stated_jaccard"]["lo"] == pytest.approx(0.2) and rows["stated_jaccard"]["hi"] == pytest.approx(0.2)
+    assert rows["stated_jaccard"]["p"] < 0.01
+    assert "gold_jaccard" not in rows                  # no LIME counterpart, nothing to pair
+
+
+def test_models_are_compared_only_on_items_both_have():
+    from src.evaluate import model_contrasts
+    m2 = pd.DataFrame([{"model": "M2", "post_id": f"p{i}", "symptom": "FATIGUE", "correctness": "TP",
+                        "plausibility": 0.6 + 0.01 * i, "comprehensiveness": 0.5} for i in range(10)])
+    m3 = m2.assign(model="M3", plausibility=m2["plausibility"] + 0.1)
+    only_m3 = pd.DataFrame([{"model": "M3", "post_id": "extra", "symptom": "FATIGUE", "correctness": "FP",
+                             "plausibility": 0.0, "comprehensiveness": 0.0}])
+    # a second symptom on the same posts, so pairing on the post alone would cross FATIGUE with SLEEP
+    m2_sleep = m2.assign(symptom="SLEEP_ISSUES", plausibility=0.9)
+    m3_sleep = m2_sleep.assign(model="M3", plausibility=1.0)
+    items = pd.concat([m2, m3, only_m3, m2_sleep, m3_sleep])
+    rows = {r["metric"]: r for r in model_contrasts(items, {"n_resamples": 200, "seed": 0})}
+    assert rows["plausibility"]["n"] == 20            # 10 posts x 2 symptoms; the unmatched M3 item is left out
+    assert rows["plausibility"]["contrast"] == "M2 - M3"
+    assert rows["plausibility"]["diff"] == pytest.approx(-0.1)
+    assert rows["plausibility"]["lo"] == pytest.approx(-0.1)     # every pair differs by 0.1: a paired interval collapses
+    assert math.isnan(rows["comprehensiveness"]["p"])                  # identical on every item: nothing to test

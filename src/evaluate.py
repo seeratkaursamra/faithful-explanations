@@ -17,6 +17,7 @@ before it gets here, so every model's erasure numbers share one scale.
 """
 import argparse
 import json
+from itertools import combinations
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,7 @@ from scipy.stats import spearmanr
 from .data import SYMPTOMS, gold, gold_text, load, references, split, symptom_counts
 from .lexicon import load_nrc, markers
 from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, did_ci, holm, jaccard, mann_whitney_p,
+                      paired_diff_ci, wilcoxon_p,
                       mean_similarity, precision_at_k, precision_recall_f1, rank_agreement, resample_posts,
                       symptom_null, top_k, unpaired_diff_ci)
 from .sentences import align, texts
@@ -348,6 +350,48 @@ def study_checks(items, baseline=None, logs=None):
     return {"status": overall, "checks": checks}
 
 
+# Metrics that mean the same thing whichever model produced them, so two models can be compared on them.
+SHARED_METRICS = ["plausibility", "own_similarity", "evidence_jaccard", "evidence_f1", "comprehensiveness",
+                  "sufficiency", "LIME_stated_jaccard"]
+
+
+def _paired(a, b, posts, boot):
+    mean, lo, hi = paired_diff_ci(a, b, posts=posts, **boot)
+    return {"n": len(a), "diff": mean, "lo": lo, "hi": hi, "p": wilcoxon_p(a, b)}
+
+
+def method_contrasts(items, boot=BOOT):
+    """IG minus LIME on the same M2 items, for every metric both methods have (paired, as the prereg
+    reserves paired tests for contrasts on the same items)."""
+    m2 = items[items["model"] == "M2"]
+    rows = []
+    for column in m2.columns:
+        other = "LIME_" + column[3:]
+        if column.startswith("IG_") and other in m2:
+            both = m2[m2[column].notna() & m2[other].notna()]
+            if len(both) >= 2:
+                rows.append({"contrast": "IG - LIME", "metric": column[3:],
+                             **_paired(both[column], both[other], both["post_id"], boot)})
+    return rows
+
+
+def model_contrasts(items, boot=BOOT):
+    """Each pair of models on the (post, symptom) items that both have a value for, metric by metric.
+    Plausibility against faithfulness is not here: they are on different scales, and their paired
+    contrast is the difference in differences, which did_ci already draws from the same items."""
+    rows = []
+    for a, b in combinations(sorted(items["model"].unique()), 2):
+        shared = items[items["model"] == a].merge(items[items["model"] == b], on=["post_id", "symptom"],
+                                                  suffixes=("_a", "_b"))
+        for metric in SHARED_METRICS:
+            if f"{metric}_a" in shared and f"{metric}_b" in shared:
+                both = shared[shared[f"{metric}_a"].notna() & shared[f"{metric}_b"].notna()]
+                if len(both) >= 2:
+                    rows.append({"contrast": f"{a} - {b}", "metric": metric,
+                                 **_paired(both[f"{metric}_a"], both[f"{metric}_b"], both["post_id"], boot)})
+    return rows
+
+
 def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, micro_f1=None, baseline=None,
         logs=None):
     """Score every record, then summarise. `embed` maps a list of texts to a list of vectors.
@@ -375,7 +419,8 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, m
                   "H1": [h1(items, m, boot=boot) for m in models if "plausibility" in items],
                   "H2": [h2(items, boot=boot)],
                   "H3": [h3(items, m, train_counts, boot=boot) for m in models if "plausibility" in items],
-                  "H4": [h4(items, micro_f1 or {}, boot)]}
+                  "H4": [h4(items, micro_f1 or {}, boot)],
+                  "paired": method_contrasts(items, boot) + model_contrasts(items, boot)}
     return items, summarise(items, boot), hypotheses
 
 
@@ -418,7 +463,7 @@ def main():
     for c in study["checks"]:
         print(f"  [{c['status']}] {c['condition']}: {c['value']}")
     for name, results in hypotheses.items():
-        if name != "study":
+        if name.startswith("H"):
             for h in results:
                 print(f"{name} {h.get('model', 'all models')}: {h['verdict']}")
 
