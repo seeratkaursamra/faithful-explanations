@@ -237,3 +237,33 @@ or synthetic inputs (checked: the one `load` without the sample flag reads fake 
 folder), no output under outputs/, figures/ or docs/ other than this file and the decision log was
 written after 19:12, and the newest LLM call in the cache is from 2026-09-25. No real-data number of any
 kind, descriptive or otherwise, existed when Amendment 2 was committed or when this note was written.
+
+## Amendment 3, 2026-10-02
+
+Made after a full audit of the code against this document. Real-data outputs that existed when it was
+written: the data checks (`make inspect`), the authors' SVM on our split (micro-F1 0.366), and a BERT run
+stopped in its first seed with nothing saved. No explanation, attribution or LLM output exists on the real
+data, and none of these numbers bears on the rules below. Items 1, 4 and 5 bring the code back to what this
+document already says; items 2, 3, 6 and 7 settle points it left open.
+
+1. **M3's comprehensiveness is a decision flip, as the primary outcome says.** The code had subtracted
+   confidences, so a label surviving erasure at 60 after 90 scored 0.3. Now: 1 if the label is no longer
+   named once its cited sentences are removed, 0 if it still is; sufficiency is the same with only the
+   cited sentences kept. The confidence drops are kept as secondaries. M2's comprehensiveness stays a
+   probability drop, as written.
+2. **The parse-failure condition counts every LLM call**: the joint answers, the erasure calls and the
+   LIME calls. A failed erasure call silently removes a primary value, so it has to count. The worse of
+   that rate, the joint-answer rate and the M2 decoupled control's rate is the one judged against 10%.
+3. **The 30-false-positive floor counts the false positives H1 can use**: those with both plausibility
+   and comprehensiveness. Counting every false positive let the study read "clear" while H1 had too few.
+4. **Undefined is left out, never 0**, as Amendment 1 says: evidence overlap needs at least one cited
+   sentence, and an attribution over fewer than two sentences (an empty or failed LIME fit, or a
+   one-sentence post) gives no overlap. Items citing nothing are counted and reported as a share, TP
+   against FP. H1 reports how many TP and FP items it left out for lacking either measure.
+5. **IG-LIME agreement is a median across test posts**, as written: each post counts once, at the mean of
+   its items.
+6. **The primary outcome is M3's.** H1 and H3 are also computed for M2 (with the decoupled control), as
+   secondary results.
+7. **Two readings made explicit.** The plausibility condition is one-sided: a rise in plausibility on wrong
+   predictions counts as holding, as in the original rule. "Fewer than 10 test examples" means gold
+   positives in the test split.
