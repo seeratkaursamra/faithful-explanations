@@ -102,6 +102,12 @@ def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=
         row["n_sentences"] = len(sentences)
     if record.get("sentences_seen") is not None:
         row["sentences_seen"] = record["sentences_seen"]
+    # M3's confidence drops (secondaries beside the decision flips), and the mark on a post that never parsed
+    for passed in ("comprehensiveness_confidence", "sufficiency_confidence"):
+        if record.get(passed) is not None:
+            row[passed] = record[passed]
+    if record.get("parse_failed"):
+        row["parse_failed"] = True
     # how far to trust the attributions themselves: IG's completeness gap, LIME's local fit
     for quality in ("ig_delta", "lime_r2", "ig_random_spearman"):
         if record.get(quality) is not None:
@@ -170,7 +176,7 @@ def compare(items, metric, boot=BOOT):
 
 
 def metric_columns(items):
-    fixed = {"model", "post_id", "symptom", "correctness", "n_gold", "n_stated", "sentences_seen"}
+    fixed = {"model", "post_id", "symptom", "correctness", "n_gold", "n_stated", "sentences_seen", "parse_failed"}
     return [c for c in items.columns if c not in fixed and items[c].notna().any()]
 
 
@@ -441,7 +447,8 @@ def study_checks(items, baseline=None, logs=None, boot=BOOT):
 
     statuses = {c["status"] for c in checks}
     overall = "inconclusive" if "triggered" in statuses else "incomplete" if "not run" in statuses else "clear"
-    failed = items.groupby("model")["parse_failed"].sum().astype(int).to_dict() if "parse_failed" in items else {}
+    failed = (items.assign(f=items["parse_failed"].fillna(False).astype(bool)).groupby("model")["f"].sum()
+              .astype(int).to_dict() if "parse_failed" in items else {})
     return {"status": overall, "checks": checks, "parse_failed_items": failed}
 
 

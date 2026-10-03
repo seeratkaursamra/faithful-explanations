@@ -636,3 +636,22 @@ def test_main_writes_its_three_files(tmp_path, monkeypatch):
     for name in ("items.csv", "summary.csv", "hypotheses.json"):
         assert (tmp_path / "out" / name).exists()
     assert json.loads((tmp_path / "out" / "hypotheses.json").read_text())["study"]["status"] in ("incomplete", "inconclusive")
+
+
+
+def test_what_the_m3_runner_writes_reaches_the_harness():
+    # the runner and the harness were each tested, but not the hand-off: these fields stopped at score()
+    posts = pd.DataFrame({"post_id": ["p1", "p2", "tr"], "text": [TEXT, "I cannot sleep.", "I never sleep."]})
+    ann = pd.DataFrame({"post_id": ["p1", "tr"], "sentence_text": ["I cannot sleep.", "I never sleep."],
+                        "DSM5_symptom": ["SLEEP_ISSUES"] * 2, "status": [1, 1], "sentence_index": [0, 0],
+                        "explanation": ["Says so.", "Never sleeping."]})
+    records = [record(stated_rationale="sleep is poor", comprehensiveness=1.0,
+                      comprehensiveness_confidence=0.3, sufficiency_confidence=0.1),
+               record(post_id="p2", predicted=False, stated_evidence=None, comprehensiveness=None, parse_failed=True)]
+    items, summary, hypotheses = run(records, posts, ann, train_ids=["tr"],
+                                     embed=lambda texts: [[1.0, float(len(t) % 3)] for t in texts])
+    assert items.loc[0, "comprehensiveness_confidence"] == pytest.approx(0.3)
+    assert items.loc[0, "sufficiency_confidence"] == pytest.approx(0.1)
+    assert hypotheses["study"]["parse_failed_items"] == {"M3": 1}
+    assert "parse_failed" not in set(summary["metric"])                 # a mark, not a metric
+    assert any(h["faithfulness"] == "comprehensiveness_confidence" for h in hypotheses["H1_secondary"])
