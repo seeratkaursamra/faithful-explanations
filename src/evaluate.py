@@ -27,7 +27,8 @@ from scipy.stats import spearmanr
 
 from .data import SYMPTOMS, gold, gold_text, load, references, split, symptom_counts
 from .lexicon import load_nrc, markers
-from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, did_ci, holm, jaccard, mann_whitney_p,
+from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, delta_ci, delta_did_ci, did_ci, holm,
+                      jaccard, mann_whitney_p,
                       paired_diff_ci, wilcoxon_p,
                       mean_similarity, precision_at_k, precision_recall_f1, rank_agreement, resample_posts,
                       symptom_null, top_k, unpaired_diff_ci)
@@ -36,9 +37,14 @@ from .sentences import split as split_sentences
 
 KIND = {(True, True): "TP", (True, False): "FP", (False, True): "FN", (False, False): "TN"}
 
-# Prereg: H1 needs the plausibility gap to be small, and is inconclusive below 30 false positives.
-SMALL_PLAUSIBILITY_GAP = 0.05
+# Amendment 2: H1's plausibility drop must be negligible as a Cliff's delta, below 0.147 (the
+# conventional cut-off, Romano et al. 2006). The model-level floor of 30 FPs is the prereg's own.
+NEGLIGIBLE_DELTA = 0.147
 MIN_FALSE_POSITIVES = 30
+# Amendment 2: a symptom's H3 difference rests on at least this many false positives.
+MIN_FP_PER_SYMPTOM = 5
+# Amendment 2: H2 is supported only if every model's interval rules out a correlation this strong.
+H2_MAX_UPPER = 0.5
 
 # Prereg H3: the gap should be wider for these than for suicidal thoughts.
 H3_TARGETS = ["PSYCHOMOTOR", "APPETITE_CHANGE", "COGNITIVE_ISSUES"]
@@ -168,8 +174,14 @@ def summarise(items, boot=BOOT):
     return pd.DataFrame(rows)
 
 
+def explaining_models(items):
+    """Models that state a rationale, so H1, H3 and the false-positive floor apply. M1 states none."""
+    return sorted(items.loc[items["plausibility"].notna(), "model"].unique()) if "plausibility" in items else []
+
+
 def h1(items, model, faithfulness="comprehensiveness", boot=BOOT):
-    """The primary statistic and the pre-registered verdict for one model."""
+    """The primary statistic (Amendment 2: Cliff's deltas, not raw gaps) and the verdict for one model.
+    The raw difference of gaps is kept as did_raw, a secondary."""
     have = items[(items["model"] == model) & items["plausibility"].notna() & items[faithfulness].notna()]
     tp, fp = have[have["correctness"] == "TP"], have[have["correctness"] == "FP"]
     out = {"model": model, "faithfulness": faithfulness, "n_tp": len(tp), "n_fp": len(fp)}
@@ -179,22 +191,24 @@ def h1(items, model, faithfulness="comprehensiveness", boot=BOOT):
         return out
 
     posts = {"posts_correct": tp["post_id"], "posts_wrong": fp["post_id"], **boot}
-    out["did"] = did_ci(tp["plausibility"], tp[faithfulness], fp["plausibility"], fp[faithfulness], **posts)
-    out["plausibility_gap"] = unpaired_diff_ci(tp["plausibility"], fp["plausibility"],
-                                               posts_a=tp["post_id"], posts_b=fp["post_id"], **boot)
-    out["faithfulness_gap"] = unpaired_diff_ci(tp[faithfulness], fp[faithfulness],
-                                               posts_a=tp["post_id"], posts_b=fp["post_id"], **boot)
-    out["verdict"] = verdict(out["did"], out["plausibility_gap"], out["faithfulness_gap"])
+    groups = {"posts_a": tp["post_id"], "posts_b": fp["post_id"], **boot}
+    out["did"] = delta_did_ci(tp["plausibility"], tp[faithfulness], fp["plausibility"], fp[faithfulness], **posts)
+    out["plausibility_delta"] = delta_ci(tp["plausibility"], fp["plausibility"], **groups)
+    out["faithfulness_delta"] = delta_ci(tp[faithfulness], fp[faithfulness], **groups)
+    out["did_raw"] = did_ci(tp["plausibility"], tp[faithfulness], fp["plausibility"], fp[faithfulness], **posts)
+    out["verdict"] = verdict(out["did"], out["plausibility_delta"], out["faithfulness_delta"])
     return out
 
 
-def verdict(did, plausibility_gap, faithfulness_gap):
-    """The decision rules in docs/prereg.md, applied mechanically. Each argument is (estimate, lo, hi)."""
+def verdict(did, plausibility_delta, faithfulness_delta):
+    """The decision rules in docs/prereg.md (Amendment 2), applied mechanically. Each argument is
+    (estimate, lo, hi) on the Cliff's delta scale. A plausibility rise on wrong predictions counts as
+    holding, as in the original rule; only a drop of a non-negligible size breaks it."""
     d, d_lo, d_hi = did
-    p, p_lo, p_hi = plausibility_gap
-    if d_lo <= 0 <= d_hi or p >= faithfulness_gap[0]:
+    p, p_lo, p_hi = plausibility_delta
+    if d_lo <= 0 <= d_hi or p >= faithfulness_delta[0]:
         return "refuted"
-    if d > 0 and (p_lo <= 0 <= p_hi or p < SMALL_PLAUSIBILITY_GAP):
+    if d > 0 and (p_lo <= 0 <= p_hi or p < NEGLIGIBLE_DELTA):
         return "supported"
     return "partial support: both degrade, faithfulness faster"
 
@@ -211,22 +225,24 @@ def h3(items, model, train_counts=None, faithfulness="comprehensiveness", boot=B
         have = s[s["plausibility"].notna() & s[faithfulness].notna()] if measured else s.iloc[:0]
         tp, fp = have[have["correctness"] == "TP"], have[have["correctness"] == "FP"]
         row = {"symptom": symptom, "train_count": (train_counts or {}).get(symptom, 0), "support": support,
-               "low_support": support < MIN_SUPPORT, "n_tp": len(tp), "n_fp": len(fp)}
+               "low_support": support < MIN_SUPPORT, "n_tp": len(tp), "n_fp": len(fp),
+               "few_fp": len(fp) < MIN_FP_PER_SYMPTOM}
         if len(tp) and len(fp):
-            row["did"] = did_ci(tp["plausibility"], tp[faithfulness], fp["plausibility"], fp[faithfulness],
-                                posts_correct=tp["post_id"], posts_wrong=fp["post_id"], **boot)
+            row["did"] = delta_did_ci(tp["plausibility"], tp[faithfulness], fp["plausibility"], fp[faithfulness],
+                                      posts_correct=tp["post_id"], posts_wrong=fp["post_id"], **boot)
         rows.append(row)
     rows.sort(key=lambda r: -r["train_count"])
     return {"model": model, "faithfulness": faithfulness, "by_symptom": rows, "verdict": h3_verdict(rows)}
 
 
 def h3_verdict(rows):
-    """Supported if every usable target's DiD exceeds suicidal thoughts'. Usable means a DiD exists
-    and the symptom is not low-support."""
+    """Supported if every usable target's DiD exceeds suicidal thoughts'. Usable (Amendment 2): a DiD
+    exists, the symptom is not low-support, and it rests on at least MIN_FP_PER_SYMPTOM false positives."""
     by = {r["symptom"]: r for r in rows}
-    usable = [s for s in H3_TARGETS + [H3_REFERENCE] if "did" in by.get(s, {}) and not by[s]["low_support"]]
+    usable = [s for s in H3_TARGETS + [H3_REFERENCE] if "did" in by.get(s, {}) and not by[s]["low_support"]
+              and not by[s].get("few_fp", False)]
     if H3_REFERENCE not in usable:
-        return "inconclusive: suicidal thoughts has no difference in differences or too little support"
+        return "inconclusive: suicidal thoughts has no difference in differences, too little support, or too few FPs"
     targets = [s for s in H3_TARGETS if s in usable]
     if not targets:
         return "inconclusive: none of psychomotor, appetite change, cognitive issues is usable"
@@ -261,30 +277,56 @@ def per_symptom(items, faithfulness="comprehensiveness"):
     return pd.DataFrame(rows)
 
 
-def _f1_faith_rho(items, keep, faithfulness):
+def _f1_faith_rho(items, keep, faithfulness, within_models=True):
+    """Spearman between per-symptom F1 and faithfulness. With within_models, each model's symptoms are
+    ranked on their own before pooling, so a model that is better overall but less faithful overall
+    cannot reverse the sign (Simpson's paradox), while every model's points still count."""
     points = per_symptom(items, faithfulness)
     points = points[points["symptom"].isin(keep)].dropna(subset=["f1", "faithfulness"])
+    if within_models:
+        points = points.assign(f1=points.groupby("model")["f1"].rank(),
+                               faithfulness=points.groupby("model")["faithfulness"].rank())
     if len(points) < 3 or points["f1"].nunique() < 2 or points["faithfulness"].nunique() < 2:
         return np.nan, len(points)
     return float(spearmanr(points["f1"], points["faithfulness"])[0]), len(points)
 
 
-def h2(items, faithfulness="comprehensiveness", boot=BOOT):
-    """Prereg H2: per-symptom F1 against per-symptom faithfulness, pooled across models, Spearman with a
-    post-level interval. Supported if the interval reaches zero or the correlation is negative.
-    Symptoms under the support rule are left out, as the prereg says they are not argued from."""
-    support = per_symptom(items, faithfulness).groupby("symptom")["support"].max()
-    keep = set(support[support >= MIN_SUPPORT].index)
+def _rho_ci(items, keep, faithfulness, boot):
     rho, n = _f1_faith_rho(items, keep, faithfulness)
-    out = {"faithfulness": faithfulness, "points": n, "symptoms": sorted(keep)}
     if np.isnan(rho):
-        out["verdict"] = f"inconclusive: {n} (model, symptom) points with both F1 and {faithfulness}, need 3"
-        return out
+        return None, n
     draws = [_f1_faith_rho(items.iloc[rows], keep, faithfulness)[0]
              for rows in resample_posts(items["post_id"], boot["n_resamples"], boot["seed"])]
     draws = [d for d in draws if not np.isnan(d)]
-    out["spearman"] = (rho, float(np.percentile(draws, 2.5)), float(np.percentile(draws, 97.5)))
-    out["verdict"] = "supported" if out["spearman"][1] <= 0 else "refuted: accuracy and faithfulness rise together"
+    return (rho, float(np.percentile(draws, 2.5)), float(np.percentile(draws, 97.5))), n
+
+
+def h2(items, faithfulness="comprehensiveness", boot=BOOT):
+    """H2 (Amendment 2): per-symptom F1 against per-symptom faithfulness, Spearman over ranks taken within
+    each model and then pooled, with a post-level interval. Pooling raw values could reverse the sign
+    (Simpson's paradox); a single model's 7 or so symptoms cannot reach a verdict at all (a perfect
+    correlation gave an interval of -0.03 to 0.96). Refuted if the interval is above zero; supported
+    only if its upper bound is below H2_MAX_UPPER, so thin data cannot count as support; otherwise
+    inconclusive. Each model's own correlation is reported alongside. Low-support symptoms are left out."""
+    support = per_symptom(items, faithfulness).groupby("symptom")["support"].max()
+    keep = set(support[support >= MIN_SUPPORT].index)
+    out = {"faithfulness": faithfulness, "symptoms": sorted(keep), "by_model": {}}
+    for model, m in items.groupby("model"):
+        spearman, n = _rho_ci(m, keep, faithfulness, boot)
+        if spearman:
+            out["by_model"][model] = {"points": n, "spearman": spearman}
+    spearman, n = _rho_ci(items, keep, faithfulness, boot)
+    out["points"] = n
+    if spearman is None:
+        out["verdict"] = f"inconclusive: {n} (model, symptom) points with both F1 and {faithfulness}, need 3"
+        return out
+    out["spearman"] = spearman
+    if spearman[1] > 0:
+        out["verdict"] = "refuted: accuracy and faithfulness rise together"
+    elif spearman[2] < H2_MAX_UPPER:
+        out["verdict"] = "supported"
+    else:
+        out["verdict"] = f"inconclusive: the interval cannot rule out a correlation of {H2_MAX_UPPER} or more"
     return out
 
 
@@ -342,9 +384,13 @@ def study_checks(items, baseline=None, logs=None):
     check(f"LLM parse failures above {MAX_PARSE_FAILURE:.0%} after retries", rates or None,
           None if not rates else max(rates.values()) > MAX_PARSE_FAILURE)
 
-    for model in sorted(items["model"].unique()):
+    # Amendment 2: only models that state a rationale; M1's correctness split tests nothing
+    explaining = explaining_models(items)
+    for model in explaining:
         n_fp = int((items[items["model"] == model]["correctness"] == "FP").sum())
         check(f"{model}: fewer than {MIN_FALSE_POSITIVES} false positives", n_fp, n_fp < MIN_FALSE_POSITIVES)
+    if not explaining:
+        check(f"fewer than {MIN_FALSE_POSITIVES} false positives in a model that explains itself", None, None)
 
     statuses = {c["status"] for c in checks}
     overall = "inconclusive" if "triggered" in statuses else "incomplete" if "not run" in statuses else "clear"
@@ -416,10 +462,11 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, m
     items = pd.DataFrame(rows)
     models = sorted(items["model"].unique())
     train_counts = symptom_counts(posts[posts["post_id"].isin(set(train_ids))]) if "labels" in posts else None
+    explaining = explaining_models(items)
     hypotheses = {"study": study_checks(items, baseline, logs),
-                  "H1": [h1(items, m, boot=boot) for m in models if "plausibility" in items],
+                  "H1": [h1(items, m, boot=boot) for m in explaining],
                   "H2": [h2(items, boot=boot)],
-                  "H3": [h3(items, m, train_counts, boot=boot) for m in models if "plausibility" in items],
+                  "H3": [h3(items, m, train_counts, boot=boot) for m in explaining],
                   "H4": [h4(items, micro_f1 or {}, boot)],
                   "paired": method_contrasts(items, boot) + model_contrasts(items, boot)}
     return items, summarise(items, boot), hypotheses

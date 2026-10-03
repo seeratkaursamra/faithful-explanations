@@ -36,7 +36,8 @@ The full dataset has not arrived, so nothing has been run on real data yet.
   tokeniser's output onto them for attribution; `align` matches a gold sentence to my split and
   `alignment_report` says how often that fails. Run the report before trusting any sentence metric.
 - `src/metrics.py` - every explanation metric and every statistical test, pure functions on plain
-  dicts/lists. `did_ci` is the H1 primary statistic. Unpaired tests for TP-vs-FP, paired only for
+  dicts/lists. `delta_did_ci` (Cliff's deltas, prereg Amendment 2) is the H1 primary statistic; the raw
+  `did_ci` is a secondary. Unpaired tests for TP-vs-FP, paired only for
   contrasts on the same items.
 - `src/lime_sentences.py` - LIME written here, not the `lime` package: the unit is the sentence and
   `predict` is any callable, so the same function explains BERT and an LLM behind HTTP. Returns the

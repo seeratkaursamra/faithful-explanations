@@ -48,20 +48,23 @@ The authors' SVM is reproduced too, only as a check that the data and split matc
 Decided in `docs/prereg.md` and coded as rules in `src/evaluate.py`, so the verdicts are computed, not
 judged after the fact.
 
-- **H1 (primary).** On wrong predictions plausibility holds while faithfulness drops. Measured as a
-  difference in differences (faithfulness gap minus plausibility gap, right vs wrong) with a 95%
-  bootstrap interval over posts. Supported if that interval is above zero and the plausibility gap is
-  small.
-- **H2.** Accuracy does not predict faithfulness: per-symptom F1 against per-symptom faithfulness, pooled
-  across models. Supported if the correlation's interval reaches zero or below.
+- **H1 (primary).** On wrong predictions plausibility holds while faithfulness drops. Each measure's
+  right-vs-wrong gap is a Cliff's delta, so a cosine that barely moves and a 0-1 probability drop are on
+  one scale; the statistic is faithfulness's delta minus plausibility's, with a 95% bootstrap interval
+  over posts. Supported if that interval is above zero and plausibility's delta is negligible (under
+  0.147).
+- **H2.** Accuracy does not predict faithfulness: per-symptom F1 against per-symptom faithfulness, ranked
+  within each model and pooled. Supported only if the interval rules out a correlation of 0.5 or more;
+  refuted if it is above zero.
 - **H3.** The H1 gap is widest for rare, inference-heavy symptoms (psychomotor, appetite change,
-  cognitive issues) and narrowest for suicidal thoughts.
+  cognitive issues) and narrowest for suicidal thoughts. A symptom counts only with at least 10 test
+  examples and 5 wrong predictions.
 - **H4.** The transparent M1 costs little accuracy (within 0.10 micro-F1 of BERT) and its top sentences
   are richer in depression markers than the rest.
 
 The study is called **inconclusive** if the BERT baseline misses 0.51 ± 0.02, IG and LIME disagree (median
 Spearman below 0.2), IG does not fall apart on a randomised classifier head, LLM replies fail to parse
-more than 10% of the time, or a model has fewer than 30 wrong predictions. The harness checks all of
+more than 10% of the time, or a model that explains itself (M2, M3) has fewer than 30 wrong predictions. The harness checks all of
 these first and prints each as triggered, clear, or not run.
 
 ## Setup
@@ -259,7 +262,7 @@ src/
   cases.py           the qualitative cases, by a fixed rule
   figures.py         figures and tables
 configs/             training recipe, prompts, bootstrap and attribution settings
-docs/prereg.md       the pre-registration, with one dated amendment made before any data
+docs/prereg.md       the pre-registration, with two dated amendments, both made before any data
 docs/decision_log.md every design decision, the alternatives, and why
 docs/observations.md notes from reading posts by hand
 tests/               one test file per module; synthetic inputs or the public sample, no network or GPU

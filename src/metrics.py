@@ -198,6 +198,31 @@ def did_ci(plaus_correct, faith_correct, plaus_wrong, faith_wrong, posts_correct
     return _interval(observed, [did(i, j) for i, j in _post_draws(groups, n_resamples, seed)])
 
 
+def delta_ci(a, b, posts_a=None, posts_b=None, n_resamples=1000, seed=0):
+    """Cliff's delta of a over b with a 95% interval over posts. Rank-based, so it means the same on a
+    cosine that barely moves and on a 0-1 probability drop."""
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    groups = [_ids(posts_a, len(a), "a"), _ids(posts_b, len(b), "b")]
+    draws = [cliffs_delta(a[i], b[j]) for i, j in _post_draws(groups, n_resamples, seed)]
+    return _interval(cliffs_delta(a, b), draws)
+
+
+def delta_did_ci(plaus_correct, faith_correct, plaus_wrong, faith_wrong, posts_correct=None, posts_wrong=None,
+                 n_resamples=1000, seed=0):
+    """H1 on one scale: Cliff's delta of faithfulness, correct over wrong, minus that of plausibility.
+    Both deltas come from the same draw of posts. Subtracting raw gaps would set a cosine against a
+    probability; subtracting deltas compares how far each measure separates right from wrong."""
+    plaus_correct, faith_correct = np.asarray(plaus_correct, float), np.asarray(faith_correct, float)
+    plaus_wrong, faith_wrong = np.asarray(plaus_wrong, float), np.asarray(faith_wrong, float)
+
+    def did(i, j):
+        return cliffs_delta(faith_correct[i], faith_wrong[j]) - cliffs_delta(plaus_correct[i], plaus_wrong[j])
+
+    groups = [_ids(posts_correct, len(plaus_correct), "c"), _ids(posts_wrong, len(plaus_wrong), "w")]
+    observed = did(np.arange(len(plaus_correct)), np.arange(len(plaus_wrong)))
+    return _interval(observed, [did(i, j) for i, j in _post_draws(groups, n_resamples, seed)])
+
+
 def wilcoxon_p(a, b):
     """Two-sided signed-rank p-value for paired items. nan when every difference is zero."""
     a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
@@ -223,6 +248,9 @@ def cliffs_delta(a, b):
 def holm(pvalues):
     """Holm-Bonferroni adjusted p-values, returned in the order given. For the nine symptoms."""
     p = np.asarray(pvalues, dtype=float)
+    # max(running, nan) keeps running, so a NaN would silently become a number; refuse it instead
+    if np.isnan(p).any():
+        raise ValueError("holm got a NaN p-value; drop untested symptoms before correcting")
     n = len(p)
     adjusted = np.empty(n)
     running = 0.0

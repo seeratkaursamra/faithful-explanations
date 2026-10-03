@@ -159,3 +159,64 @@ are counted and reported, not scored as 0. The k = 2 robustness check is unchang
 **6. Evidence overlap between S and G on incorrect predictions.** Evidence Jaccard and sentence
 precision, recall and F1 need G_evid, which is empty on a false positive. They are reported on
 correct predictions only.
+
+## Amendment 2, 2026-10-02
+
+Made after a sanity check of the whole analysis code, on the day ReDSM5 access was granted and before
+the data files were downloaded. No model has been run on the real data and no real-data number exists.
+The text above stands where this section does not override it. Each change has a decision-log entry,
+and each was found by a probe on synthetic data that the old rule got wrong.
+
+**1. H1 compares the two gaps on one scale.** The difference in differences subtracted a gap in mean
+cosine (which barely moves: the sample's expert rationales span about 0.11 between own symptom and the
+others) from a gap in a 0-1 probability drop. A simulated plausibility drop of 0.9 SD against a
+faithfulness drop of 0.35 SD came out "supported". Each gap is now Cliff's delta, correct over wrong:
+P(correct > wrong) - P(correct < wrong). The primary statistic is delta(faithfulness) - delta(plausibility),
+both read from the same post-level resamples (`metrics.delta_did_ci`).
+- Supported: the interval of that difference excludes zero and is positive, and plausibility's delta is
+  negligible: its interval contains zero or its estimate is below 0.147, the conventional cut-off for a
+  negligible Cliff's delta (Romano et al., 2006). This replaces the 0.05 cosine threshold.
+- Refuted: the interval contains zero, or plausibility's delta is at least faithfulness's.
+- Partial support otherwise.
+The raw difference in differences is reported as a secondary.
+
+**2. H2 is judged on ranks within each model, pooled.** One correlation over every (model, symptom)
+point let a model that is better overall but less faithful overall reverse the sign: a simulation
+positive within each model came out "supported". Correlating within each model alone has almost no
+power at this size: a perfect correlation over 7 symptoms gave an interval of -0.03 to 0.96. So each
+model's per-symptom F1 and mean comprehensiveness are ranked within that model, and Spearman is taken
+over the pooled ranks, with a post-level interval.
+- Refuted: the interval is above zero.
+- Supported: the interval's upper bound is below 0.5. Thin data that cannot rule out a strong positive
+  link is no longer counted as support, as the original "interval contains zero" rule allowed.
+- Inconclusive otherwise. Each model's own correlation is reported alongside. Symptoms under the
+  10-example rule are left out, as before.
+
+**3. H3 needs false positives, not only gold support.** A symptom enters the H3 comparison only with at
+least 10 test examples and at least 5 false positives. Before, two symptoms with one false positive each
+decided the verdict. The per-symptom statistic is the same Cliff's-delta difference as H1's.
+
+**4. The false-positive floor applies to models that explain themselves.** The condition "fewer than 30
+false positives for a given model" exists because it makes the correctness split unstable, and M1 states
+no rationale, so its split tests nothing. M1 had made the whole study inconclusive in a probe. The floor,
+H1 and H3 now apply to M2 and M3 only.
+
+**5. Rules settled since Amendment 1, recorded here so this document stands alone.**
+- H4: M1's micro-F1 at most 0.10 below M2's five-seed mean, and the rate of marker words (first person,
+  NRC fear, anger or sadness, absolutist; each word once) in M1's top two sentences minus the rest,
+  with a post-level interval above zero.
+- The randomised-model check: IG on M2 against IG on a copy with the classifier head re-drawn at
+  BERT's initial scale; IG has failed to degrade if the median absolute Spearman is 0.5 or more.
+- Parse failures: the worse of the M3 joint run and the M2 decoupled control counts.
+- M2 is explained only on the sentences inside BERT's 512-token window; the share of gold evidence
+  past the cut is reported.
+- M3 is prompted zero-shot.
+
+**6. What the plausibility half of H1 can show.** Since Amendment 1, plausibility compares a rationale
+with the same symptom's rationales from other posts. A model writing about the symptom it predicted
+will read like that symptom's typical rationale whether or not the post supports it, so plausibility
+holding on wrong predictions is close to built into the measure. That is the point about
+similarity-based evaluation this study makes, and the write-up will say so: the evidence for H1 is in
+the faithfulness half. As an exploratory check grounded in the post, a model's rationale on a false
+positive is also compared with the annotator's rejection note for that symptom in that post, where one
+exists (status 0 rows).

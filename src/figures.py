@@ -181,7 +181,7 @@ def key_figure(items, hypotheses, path, boot=BOOT):
         ax.set_xlim(0, 1)
         _axes(ax)
         h1 = next((h for h in hypotheses.get("H1", []) if h["model"] == model), {})
-        note = f"DiD {_ci_text(h1['did'])}" if "did" in h1 else h1.get("verdict", "").split(":")[0]
+        note = f"DiD of Cliff's deltas {_ci_text(h1['did'])}" if "did" in h1 else h1.get("verdict", "").split(":")[0]
         ax.set_title(f"{MODEL_NAMES.get(model, model)}\n{note}", fontsize=7.5, color=INK, loc="left")
     handles = [Line2D([], [], marker="o", ls="", mfc=INK, mec=INK, ms=5, label="correct (TP)"),
                Line2D([], [], marker="o", ls="", mfc="white", mec=INK, ms=5, label="wrong (FP)")]
@@ -190,8 +190,8 @@ def key_figure(items, hypotheses, path, boot=BOOT):
 
 
 def symptom_figure(hypotheses, path):
-    """Fig 3, H3: the difference in differences per symptom, most common first. Hollow grey marks are
-    under the 10-example support rule: shown, not argued from."""
+    """Fig 3, H3: the difference in differences of Cliff's deltas per symptom, most common first. Hollow
+    grey marks are under the support rule or rest on fewer than 5 false positives: shown, not argued from."""
     results = hypotheses.get("H3", [])
     # one x scale for every panel, or a small effect in one model looks as big as a large one in another
     fig, axes = plt.subplots(1, max(len(results), 1), figsize=(7.0, 2.6), squeeze=False, sharey=True, sharex=True)
@@ -202,16 +202,16 @@ def symptom_figure(hypotheses, path):
                 ax.text(0, y, "no FP", fontsize=6, color=MUTED, va="center", ha="center")
                 continue
             mean, lo, hi = r["did"]
-            colour, face = (FAINT, "white") if r["low_support"] else (INK, INK)
+            colour, face = (FAINT, "white") if r["low_support"] or r.get("few_fp") else (INK, INK)
             ax.errorbar(mean, y, xerr=[[mean - lo], [hi - mean]], fmt="o", ms=4.5, mfc=face, mec=colour,
                         ecolor=colour, elinewidth=0.8, capsize=0, zorder=3)
         ax.axvline(0, color=INK, linewidth=0.6, zorder=1)
-        ax.set_yticks(range(len(rows)), [f"{_nice(r['symptom'])} ({r['support']}){_h3_role(r['symptom'])}"
+        ax.set_yticks(range(len(rows)), [f"{_nice(r['symptom'])} ({r['support']}, {r['n_fp']} FP){_h3_role(r['symptom'])}"
                                          for r in reversed(rows)], fontsize=7)
         _axes(ax)
         ax.set_title(f"{MODEL_NAMES.get(h3['model'], h3['model'])}\n{_readable(h3['verdict'])}", fontsize=7.5,
                      loc="left")
-        ax.set_xlabel("faithfulness gap minus plausibility gap", fontsize=7, color=INK)
+        ax.set_xlabel("Cliff's delta, faithfulness minus plausibility", fontsize=7, color=INK)
     return _save(fig, path)
 
 
@@ -234,7 +234,8 @@ def accuracy_figure(items, hypotheses, path, faithfulness="comprehensiveness"):
     ax.set_ylim(0, 1)
     ax.set_xlabel("per-symptom F1", fontsize=7)
     ax.set_ylabel(f"mean {faithfulness}", fontsize=7)
-    title = f"Spearman {_ci_text(h2['spearman'])}" if "spearman" in h2 else h2.get("verdict", "H2 not run")
+    title = (f"Spearman of within-model ranks {_ci_text(h2['spearman'])}" if "spearman" in h2
+             else h2.get("verdict", "H2 not run"))
     ax.set_title(title, fontsize=7.5, loc="left")
     handles = [Line2D([], [], marker=MARKERS.get(m, "o"), ls="", mfc=INK, mec=INK, ms=5, label=MODEL_NAMES.get(m, m))
                for m in sorted(points["model"].unique())]

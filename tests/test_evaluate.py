@@ -137,7 +137,23 @@ def test_h1_supported_on_its_own_shape():
                                         comprehensiveness=0.1 + rng.normal(0, 0.05, 40))
     out = h1(pd.concat([tp, fp]), "M3")
     assert out["verdict"] == "supported"
-    assert out["did"][0] == pytest.approx(0.5, abs=0.05)
+    # faithfulness separates right from wrong completely (delta 1), plausibility not at all (delta ~0)
+    assert out["did"][0] > 0.7 and out["plausibility_delta"][0] < 0.147
+    assert out["did_raw"][0] == pytest.approx(0.5, abs=0.05)          # the old raw statistic, now secondary
+
+
+def test_h1_is_not_fooled_by_a_plausibility_drop_on_a_narrow_scale():
+    # Amendment 2's reason: plausibility falls ~0.9 of its SD, faithfulness only ~0.35 of its SD.
+    # The raw rule called this supported (plausibility gap 0.04, under 0.05). On deltas it is not.
+    rng = np.random.default_rng(0)
+    tp = items_frame(500, 0, 0, 0).assign(plausibility=rng.normal(0.80, 0.045, 500),
+                                          comprehensiveness=rng.normal(0.50, 0.37, 500))
+    fp = items_frame(0, 150, 0, 0).assign(plausibility=rng.normal(0.755, 0.045, 150),
+                                          comprehensiveness=rng.normal(0.35, 0.37, 150))
+    out = h1(pd.concat([tp, fp]), "M3", boot={"n_resamples": 300, "seed": 0})
+    assert out["did_raw"][1] > 0                                       # the raw DiD still looks positive
+    assert out["plausibility_delta"][0] > out["faithfulness_delta"][0]
+    assert out["verdict"] == "refuted"
 
 
 # --- end to end ----------------------------------------------------------------------------------------
@@ -236,14 +252,16 @@ def test_h3_verdict_rules():
 def test_h3_computes_per_symptom_and_orders_by_training_frequency():
     rng = np.random.default_rng(0)
     frames = []
-    for symptom, faith_fp in [("COGNITIVE_ISSUES", 0.1), ("SUICIDAL_THOUGHTS", 0.5)]:
-        tp = items_frame(12, 0, 0, 0, symptom).assign(plausibility=0.8, comprehensiveness=0.6 + rng.normal(0, 0.01, 12))
-        fp = items_frame(0, 12, 0, 0, symptom).assign(plausibility=0.8, comprehensiveness=faith_fp + rng.normal(0, 0.01, 12))
+    # cognitive issues: faithfulness separates right from wrong completely; suicidal thoughts: not at all
+    for symptom, faith_fp in [("COGNITIVE_ISSUES", 0.1), ("SUICIDAL_THOUGHTS", 0.6)]:
+        tp = items_frame(12, 0, 0, 0, symptom).assign(plausibility=0.8, comprehensiveness=0.6 + rng.normal(0, 0.05, 12))
+        fp = items_frame(0, 12, 0, 0, symptom).assign(plausibility=0.8, comprehensiveness=faith_fp + rng.normal(0, 0.05, 12))
         frames += [tp.assign(post_id=tp.post_id + symptom), fp.assign(post_id=fp.post_id + symptom)]
     out = h3(pd.concat(frames), "M3", train_counts={"SUICIDAL_THOUGHTS": 130, "COGNITIVE_ISSUES": 47})
     by = {r["symptom"]: r for r in out["by_symptom"]}
-    assert by["COGNITIVE_ISSUES"]["did"][0] == pytest.approx(0.5, abs=0.02)
-    assert by["SUICIDAL_THOUGHTS"]["did"][0] == pytest.approx(0.1, abs=0.02)
+    assert by["COGNITIVE_ISSUES"]["did"][0] == pytest.approx(1.0)
+    assert abs(by["SUICIDAL_THOUGHTS"]["did"][0]) < 0.5
+    assert by["COGNITIVE_ISSUES"]["n_fp"] == 12 and not by["COGNITIVE_ISSUES"]["few_fp"]
     assert [r["symptom"] for r in out["by_symptom"][:2]] == ["SUICIDAL_THOUGHTS", "COGNITIVE_ISSUES"]
     assert out["verdict"] == "supported, on COGNITIVE_ISSUES"
 
@@ -294,7 +312,8 @@ def test_per_symptom_f1_needs_no_true_negatives():
     assert row["f1"] == pytest.approx(6 / 9) and row["support"] == 5 and row["faithfulness"] == pytest.approx(0.4)
 
 
-SYMPTOM_SET = ["DEPRESSED_MOOD", "WORTHLESSNESS", "FATIGUE", "SLEEP_ISSUES"]
+SYMPTOM_SET = ["DEPRESSED_MOOD", "WORTHLESSNESS", "SUICIDAL_THOUGHTS", "FATIGUE", "ANHEDONIA", "SLEEP_ISSUES",
+               "COGNITIVE_ISSUES"]          # the seven that clear the support rule on the real test set
 
 
 def h2_items(faith_rises_with_f1):
@@ -310,13 +329,27 @@ def h2_items(faith_rises_with_f1):
 def test_h2_refuted_when_faithfulness_rises_with_accuracy():
     from src.evaluate import h2
     out = h2(h2_items(True), boot={"n_resamples": 200, "seed": 0})
-    assert out["spearman"][0] > 0.8 and out["verdict"].startswith("refuted") and out["points"] == 8
+    assert out["verdict"].startswith("refuted") and out["spearman"][1] > 0 and out["points"] == 14
+    assert all(r["spearman"][0] > 0.8 and r["points"] == 7 for r in out["by_model"].values())
 
 
 def test_h2_supported_when_they_do_not():
     from src.evaluate import h2
     out = h2(h2_items(False), boot={"n_resamples": 200, "seed": 0})
-    assert out["spearman"][0] < 0 and out["verdict"] == "supported"
+    assert out["spearman"][2] < 0.5 and out["verdict"] == "supported"
+
+
+def test_h2_is_judged_within_each_model_so_pooling_cannot_reverse_it():
+    # Amendment 2's reason: F1 and faithfulness rise together inside each model, but M3 has higher F1
+    # and lower faithfulness overall, so the pooled correlation is negative (Simpson's paradox)
+    from src.evaluate import h2
+    frames = []
+    for model, f1_shift, faith_shift in (("M2", 0, 0.5), ("M3", 4, 0.0)):
+        for k, symptom in enumerate(SYMPTOM_SET):
+            frames.append(symptom_items(model, symptom, tp=6 + 2 * (k + f1_shift), fp=3, fn=6,
+                                        faith=faith_shift + 0.1 * k))
+    out = h2(pd.concat(frames, ignore_index=True), boot={"n_resamples": 200, "seed": 0})
+    assert out["verdict"].startswith("refuted")
 
 
 def test_h2_leaves_out_low_support_symptoms_and_needs_three_points():
@@ -356,13 +389,12 @@ def noisy_items(rates, seed):
     return pd.concat(frames, ignore_index=True)
 
 
-def test_h2_a_positive_correlation_whose_interval_reaches_zero_is_still_supported():
-    # the prereg's rule is the interval, not the sign of the estimate
+def test_h2_thin_data_is_inconclusive_not_support():
+    # Amendment 2: intervals this wide cannot rule out a strong positive link, so they are not support
     from src.evaluate import h2
-    out = h2(noisy_items([0.45, 0.5, 0.5, 0.55], seed=4), boot={"n_resamples": 300, "seed": 0})
-    rho, lo, hi = out["spearman"]
-    assert rho > 0 and lo < 0 < hi
-    assert out["verdict"] == "supported"
+    out = h2(noisy_items([0.45, 0.5, 0.48, 0.5, 0.52, 0.5, 0.55], seed=4), boot={"n_resamples": 300, "seed": 0})
+    assert out["spearman"][1] < 0 < out["spearman"][2]
+    assert out["verdict"].startswith("inconclusive")
 
 
 def test_h4_a_positive_density_whose_interval_crosses_zero_is_not_enough():
@@ -378,9 +410,9 @@ def test_h4_a_positive_density_whose_interval_crosses_zero_is_not_enough():
 # --- the whole-study conditions ------------------------------------------------------------------------
 
 def study_items(n_fp=40, ig_lime=0.5, random_rho=0.2):
-    rows = [{"model": "M2", "post_id": f"t{i}", "symptom": "FATIGUE", "correctness": "TP",
+    rows = [{"model": "M2", "post_id": f"t{i}", "symptom": "FATIGUE", "correctness": "TP", "plausibility": 0.6,
              "ig_lime_spearman": ig_lime, "ig_random_spearman": random_rho} for i in range(10)]
-    rows += [{"model": "M2", "post_id": f"f{i}", "symptom": "FATIGUE", "correctness": "FP",
+    rows += [{"model": "M2", "post_id": f"f{i}", "symptom": "FATIGUE", "correctness": "FP", "plausibility": 0.6,
               "ig_lime_spearman": ig_lime, "ig_random_spearman": random_rho} for i in range(n_fp)]
     return pd.DataFrame(rows)
 
@@ -464,3 +496,23 @@ def test_models_are_compared_only_on_items_both_have():
     assert rows["plausibility"]["diff"] == pytest.approx(-0.1)
     assert rows["plausibility"]["lo"] == pytest.approx(-0.1)     # every pair differs by 0.1: a paired interval collapses
     assert math.isnan(rows["comprehensiveness"]["p"])                  # identical on every item: nothing to test
+
+
+
+def test_h3_does_not_rest_on_a_single_false_positive():
+    # Amendment 2's reason: two targets with 1 FP each used to decide H3
+    rows = [{"symptom": s, "low_support": False, "did": (0.99, 0.99, 0.99), "n_fp": 1, "few_fp": True}
+            for s in ("COGNITIVE_ISSUES", "APPETITE_CHANGE")]
+    rows.append({"symptom": "SUICIDAL_THOUGHTS", "low_support": False, "did": (0.2, 0.1, 0.3), "n_fp": 12, "few_fp": False})
+    assert h3_verdict(rows).startswith("inconclusive")
+
+
+def test_m1_never_counts_toward_the_false_positive_floor():
+    # Amendment 2's reason: M1 states no rationale, so its few FPs used to make the whole study inconclusive
+    from src.evaluate import explaining_models, study_checks
+    m1 = pd.DataFrame([{"model": "M1", "post_id": f"a{i}", "symptom": "FATIGUE", "correctness": "FP"} for i in range(10)])
+    items = pd.concat([study_items(), m1])
+    assert explaining_models(items) == ["M2"]
+    result = study_checks(items, BASELINE_OK, LOGS_OK)
+    assert result["status"] == "clear"
+    assert not any(c["condition"].startswith("M1") for c in result["checks"])
