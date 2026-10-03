@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
+from tqdm import tqdm
 from transformers import BertForSequenceClassification, BertTokenizer
 
 from . import lime_sentences
@@ -199,6 +200,7 @@ def main():
     predict = bert_predict(model, tokenizer, device, max_len)
 
     # the checkpoint must be the model training scored: its test predictions should come back unchanged
+    print("checking the checkpoint against training's saved predictions...")
     checkpoint_diff = None
     scored = Path(args.checkpoint).parent / "test_probs.csv"
     if scored.exists():
@@ -226,7 +228,7 @@ def main():
 
     records, failed, asked = [], [], 0
     start = time.time()
-    for row in test.itertuples():
+    for row in tqdm(test.itertuples(), total=len(test), desc="M2 posts", unit="post"):
         recs, result = post_records(row.post_id, row.text, row.labels, classes, predict, ig, explain_why,
                                     cfg["lime"], threshold, seen, ig_random)
         records += recs

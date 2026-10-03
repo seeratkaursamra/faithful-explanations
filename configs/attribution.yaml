@@ -3,7 +3,7 @@ lime:
   n_samples: 100
   seed: 0
 ig:
-  steps: 50
+  steps: 400        # 50 left a completeness gap above 0.1 on 43% of M2's items; see the decision log
   batch: 10
 sanity:
   seed: 0          # the draw of the randomised classifier head (Adebayo check)

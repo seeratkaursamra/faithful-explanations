@@ -8,6 +8,7 @@ from itertools import combinations
 from pathlib import Path
 
 import yaml
+from tqdm import tqdm
 
 from . import lime_sentences
 from .data import NO_SYMPTOMS, check_against_paper, load, split
@@ -184,7 +185,7 @@ def main():
 
     start = time.time()
     with ThreadPoolExecutor(args.workers) as pool:
-        results = list(pool.map(one, test.itertuples()))
+        results = list(tqdm(pool.map(one, test.itertuples()), total=len(test), desc="M3 posts", unit="post"))
     seconds = time.time() - start
 
     out = Path(args.out)
