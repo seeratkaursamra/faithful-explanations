@@ -542,6 +542,17 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, m
     return items, summarise(items, boot), hypotheses
 
 
+def stale_m2(m2_log, ig_steps):
+    """A warning when M2's records were made with a different number of IG steps than the config now
+    sets (or by a run that did not record it), so stale attributions are not evaluated unnoticed."""
+    if m2_log is None:
+        return None
+    if m2_log.get("ig_steps") != ig_steps:
+        return (f"warning: M2's records were made with ig_steps={m2_log.get('ig_steps')}, but "
+                f"configs/attribution.yaml says {ig_steps}; re-run `make m2` before trusting M2's attributions")
+    return None
+
+
 def main():
     from functools import partial
 
@@ -571,6 +582,11 @@ def main():
         print(f"no NRC file at {args.nrc}: marker density and H4 are skipped")
     logs = {m: json.loads((Path(args.logs) / f"{m.lower()}_log.json").read_text())
             for m in ("M2", "M3") if (Path(args.logs) / f"{m.lower()}_log.json").exists()}
+    attribution = Path("configs/attribution.yaml")
+    if attribution.exists():
+        warning = stale_m2(logs.get("M2"), yaml.safe_load(attribution.read_text())["ig"]["steps"])
+        if warning:
+            print(warning)
     boot = yaml.safe_load(Path(args.config).read_text())["bootstrap"]
 
     posts, ann = load(args.data)

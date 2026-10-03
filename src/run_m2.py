@@ -243,6 +243,7 @@ def main():
     log = {"posts": len(test), "decoupled_asked": asked, "decoupled_failures": len(failed), "failed_posts": failed,
            "ig_delta_max": max(deltas, default=None), "ig_delta_median": float(np.median(deltas)) if deltas else None,
            "checkpoint": args.checkpoint, "checkpoint_check_max_diff": checkpoint_diff, "max_len": max_len,
+           "ig_steps": cfg["ig"]["steps"],
            "threshold": threshold, "device": str(device), "sanity": args.sanity,
            "seconds": round(time.time() - start, 1), "seconds_per_post": round((time.time() - start) / len(test), 2)}
     (out / "m2_log.json").write_text(json.dumps(log, indent=2))

@@ -655,3 +655,10 @@ def test_what_the_m3_runner_writes_reaches_the_harness():
     assert hypotheses["study"]["parse_failed_items"] == {"M3": 1}
     assert "parse_failed" not in set(summary["metric"])                 # a mark, not a metric
     assert any(h["faithfulness"] == "comprehensiveness_confidence" for h in hypotheses["H1_secondary"])
+
+
+def test_stale_m2_records_are_flagged():
+    from src.evaluate import stale_m2
+    assert "re-run `make m2`" in stale_m2({"posts": 297}, 400)                  # a run that never recorded its steps
+    assert "ig_steps=50" in stale_m2({"ig_steps": 50}, 400)
+    assert stale_m2({"ig_steps": 400}, 400) is None and stale_m2(None, 400) is None
