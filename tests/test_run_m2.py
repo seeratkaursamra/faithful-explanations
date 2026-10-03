@@ -168,3 +168,13 @@ def test_seed_check_compares_labels_per_post_and_attributions_on_shared_items():
     assert out["n_shared_predictions"] == 1                      # only FATIGUE on p1 is in both
     assert out["IG_median_spearman"] == pytest.approx(-1.0) and out["IG_top2_jaccard"] == pytest.approx(1 / 3)
     assert out["LIME_median_spearman"] == pytest.approx(1.0) and out["LIME_top2_jaccard"] == 1.0
+
+
+
+def test_the_seed_check_run_cannot_overwrite_the_main_records(monkeypatch):
+    import sys
+    from src import run_m2
+    for flags in (["--checkpoint", "outputs/bert_baseline/seed1/checkpoint"], ["--limit", "5"]):
+        monkeypatch.setattr(sys, "argv", ["run_m2", *flags])
+        with pytest.raises(SystemExit, match="its own --out"):
+            run_m2.main()

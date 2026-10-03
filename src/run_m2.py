@@ -22,6 +22,10 @@ from .sentences import texts, truncated
 from .train_bert import pick_device
 
 
+MAIN_OUT = "outputs/records"
+MAIN_CHECKPOINT = "outputs/bert_baseline/seed0/checkpoint"
+
+
 def bert_predict(model, tokenizer, device, max_len=512, batch=8):
     """Posts (each a list of sentences) to a probability row per post, over every label.
 
@@ -144,18 +148,21 @@ def seed_check(run_a, run_b, post_ids):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", default="outputs/bert_baseline/seed0/checkpoint",
+    ap.add_argument("--checkpoint", default=MAIN_CHECKPOINT,
                     help="seed 0 per the prereg; rerun with another seed's checkpoint for the check")
     ap.add_argument("--data", default="data")
     ap.add_argument("--prompts", default="configs/prompts.yaml")
     ap.add_argument("--config", default="configs/attribution.yaml")
-    ap.add_argument("--out", default="outputs/records")
+    ap.add_argument("--out", default=MAIN_OUT)
     ap.add_argument("--threshold", type=float, default=0.5)
     ap.add_argument("--limit", type=int, default=None, help="first N test posts only, for a trial run")
     ap.add_argument("--allow-mismatch", action="store_true", help="for the public sample")
     ap.add_argument("--sanity", action="store_true", help="also IG on a randomised head (doubles IG time)")
     ap.add_argument("--seed-check", nargs=2, metavar="JSONL", help="compare two finished runs (seed 0, seed 1)")
     args = ap.parse_args()
+    # the seed check or a trial written into the main folder would replace the records the harness reads
+    if args.out == MAIN_OUT and not args.seed_check and (args.checkpoint != MAIN_CHECKPOINT or args.limit):
+        raise SystemExit(f"another checkpoint or a limit must not write to {MAIN_OUT}; give it its own --out")
 
     posts, _ = load(args.data)
     if not args.allow_mismatch and not check_against_paper(posts)["matches_paper"]:

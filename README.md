@@ -129,7 +129,9 @@ licensed, so it is gitignored. Check it loaded: `python -c "from src.lexicon imp
 should print about 2,400.
 
 **The data.** Request access on Hugging Face, then put `redsm5_posts.csv` and `redsm5_annotations.csv`
-in `data/`. They are gitignored and never committed. Until then, `data/` holds the authors' public
+in `data/`. I use the release at commit `b81b534` (updated 2026-07-06), which has one more
+suicidal-thoughts post than the paper (166 against 165); `make inspect` accepts that one difference and
+nothing else. They are gitignored and never committed. Until then, `data/` holds the authors' public
 paraphrased sample (17 posts), and everything falls back to it.
 
 Training picks CUDA, then the Apple GPU, then the CPU. Set `device:` in `configs/bert_baseline.yaml`

@@ -17,6 +17,9 @@ from .sentences import split as split_sentences
 from .sentences import texts
 
 
+MAIN_OUT = "outputs/records"
+
+
 def counting(fn):
     """fn, keeping a count of its calls in `.calls`: the run log's measure of how much the model was asked.
     A list, because appending is safe when several threads call at once."""
@@ -69,7 +72,12 @@ def post_records(post_id, text, gold_labels, prompts, ask_fn, lime_cfg=None):
 
     result = reply(sentences)
     if not result["ok"]:
-        return [], result
+        # no answer is no prediction: the gold symptoms are recorded as missed, marked, so a failed post
+        # cannot raise recall by dropping out of the counts
+        return [{"model": "M3", "post_id": post_id, "symptom": label, "predicted": False, "gold": True,
+                 "stated_evidence": None, "stated_rationale": None, "attribution": {}, "comprehensiveness": None,
+                 "sufficiency": None, "parse_failed": True}
+                for label in sorted(set(gold_labels) - {NO_SYMPTOMS})], result
     said = {s["label"]: s for s in result["symptoms"] if s["label"] != NO_SYMPTOMS}
     records = []
     for label in sorted(set(said) | (set(gold_labels) - {NO_SYMPTOMS})):
@@ -121,7 +129,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="data")
     ap.add_argument("--prompts", default="configs/prompts.yaml")
-    ap.add_argument("--out", default="outputs/records")
+    ap.add_argument("--out", default=MAIN_OUT)
     ap.add_argument("--workers", type=int, default=1, help="parallel requests; set OLLAMA_NUM_PARALLEL to match")
     ap.add_argument("--limit", type=int, default=None, help="first N test posts only, for a trial run")
     ap.add_argument("--allow-mismatch", action="store_true", help="for the public sample")
@@ -131,6 +139,9 @@ def main():
     ap.add_argument("--lime", action="store_true", help="also LIME on every predicted symptom: the long run")
     ap.add_argument("--config", default="configs/attribution.yaml")
     args = ap.parse_args()
+    # a stability or trial run written into the main folder would replace the records the harness reads
+    if args.out == MAIN_OUT and not args.stability and (args.seed != 0 or args.temperature > 0 or args.limit):
+        raise SystemExit(f"a seed, temperature or limit run must not write to {MAIN_OUT}; give it its own --out")
     lime_cfg = yaml.safe_load(Path(args.config).read_text())["lime"] if args.lime else None
 
     posts, _ = load(args.data)

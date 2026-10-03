@@ -25,7 +25,7 @@ import pandas as pd
 import yaml
 from scipy.stats import spearmanr
 
-from .data import SYMPTOMS, gold, gold_text, load, references, split, symptom_counts
+from .data import SYMPTOMS, gold, gold_text, load, references, rejection_text, split, symptom_counts
 from .lexicon import load_nrc, markers
 from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, delta_ci, delta_did_ci, did_ci, holm,
                       jaccard, mann_whitney_p,
@@ -82,16 +82,22 @@ def density(sentences, top, negative_words):
     return {k: a[k] - b[k] for k in a if not (np.isnan(a[k]) or np.isnan(b[k]))}
 
 
-def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=None):
+def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=None, rejection=""):
     """Every per-item metric the pre-registration names. A metric that is undefined for this item
     (no rationale, no gold, nothing cited) is left out of the row, never scored as 0.
-    Marker density (H4) needs the post's sentences and the NRC words; without them it is skipped."""
+    Marker density (H4) needs the post's sentences and the NRC words; without them it is skipped.
+    `rejection` is the annotator's status-0 note for this symptom in this post, if any (exploratory)."""
     kind = KIND[(bool(record["predicted"]), bool(record["gold"]))]
     stated = record.get("stated_evidence")
     s_evid = set(stated or [])
     row = {"model": record["model"], "post_id": record["post_id"], "symptom": record["symptom"],
            "correctness": kind, "n_gold": len(g_evid), "n_stated": len(s_evid) if stated is not None else np.nan,
            "comprehensiveness": record.get("comprehensiveness"), "sufficiency": record.get("sufficiency")}
+    # post length, so a TP-FP gap in attribution overlap can be checked against a gap in length
+    if sentences is not None:
+        row["n_sentences"] = len(sentences)
+    if record.get("sentences_seen") is not None:
+        row["sentences_seen"] = record["sentences_seen"]
     # how far to trust the attributions themselves: IG's completeness gap, LIME's local fit
     for quality in ("ig_delta", "lime_r2", "ig_random_spearman"):
         if record.get(quality) is not None:
@@ -104,6 +110,10 @@ def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=
         row["null_similarity"] = symptom_null(v, refs, record["symptom"])
         if kind == "TP" and g_text:
             row["own_similarity"] = cosine(v, vectors[g_text])
+        # exploratory (Amendment 2): on a false positive, the rationale against the annotator's note
+        # rejecting this symptom in this post, the one reference grounded in the post itself
+        if kind == "FP" and rejection:
+            row["rejection_similarity"] = cosine(v, vectors[rejection])
 
     # M2 only: how much of the psychologist's evidence lies past BERT's 512-token cut, out of its reach
     if record.get("sentences_seen") is not None and g_evid:
@@ -149,7 +159,7 @@ def compare(items, metric, boot=BOOT):
 
 
 def metric_columns(items):
-    fixed = {"model", "post_id", "symptom", "correctness", "n_gold", "n_stated"}
+    fixed = {"model", "post_id", "symptom", "correctness", "n_gold", "n_stated", "sentences_seen"}
     return [c for c in items.columns if c not in fixed and items[c].notna().any()]
 
 
@@ -398,8 +408,8 @@ def study_checks(items, baseline=None, logs=None):
 
 
 # Metrics that mean the same thing whichever model produced them, so two models can be compared on them.
-SHARED_METRICS = ["plausibility", "own_similarity", "evidence_jaccard", "evidence_f1", "comprehensiveness",
-                  "sufficiency", "LIME_stated_jaccard"]
+# Not comprehensiveness or sufficiency: graded probability drops on BERT, near 0/1 flips on the LLM.
+SHARED_METRICS = ["plausibility", "own_similarity", "evidence_jaccard", "evidence_f1", "LIME_stated_jaccard"]
 
 
 def _paired(a, b, posts, boot):
@@ -425,8 +435,13 @@ def method_contrasts(items, boot=BOOT):
 def model_contrasts(items, boot=BOOT):
     """Each pair of models on the (post, symptom) items that both have a value for, metric by metric.
     Plausibility against faithfulness is not here: they are on different scales, and their paired
-    contrast is the difference in differences, which did_ci already draws from the same items."""
+    contrast is the difference in differences. Posts longer than BERT's window are left out: M2's
+    control only saw the part BERT saw, so on those posts the two models read different text."""
     rows = []
+    cut = set()
+    if {"sentences_seen", "n_sentences"} <= set(items.columns):
+        cut = set(items.loc[items["sentences_seen"] < items["n_sentences"], "post_id"])
+    items = items[~items["post_id"].isin(cut)]
     for a, b in combinations(sorted(items["model"].unique()), 2):
         shared = items[items["model"] == a].merge(items[items["model"] == b], on=["post_id", "symptom"],
                                                   suffixes=("_a", "_b"))
@@ -434,7 +449,7 @@ def model_contrasts(items, boot=BOOT):
             if f"{metric}_a" in shared and f"{metric}_b" in shared:
                 both = shared[shared[f"{metric}_a"].notna() & shared[f"{metric}_b"].notna()]
                 if len(both) >= 2:
-                    rows.append({"contrast": f"{a} - {b}", "metric": metric,
+                    rows.append({"contrast": f"{a} - {b}", "metric": metric, "posts_past_window_left_out": len(cut),
                                  **_paired(both[f"{metric}_a"], both[f"{metric}_b"], both["post_id"], boot)})
     return rows
 
@@ -450,15 +465,17 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, m
         text = text_by_id[record["post_id"]]
         spans = split_sentences(text)
         g_text = gold_text(ann, record["post_id"], record["symptom"])
+        wrong = record["predicted"] and not record["gold"]
+        rejection = rejection_text(ann, record["post_id"], record["symptom"]) if wrong else ""
         prepared.append((record, gold_evidence(ann, record["post_id"], record["symptom"], text, spans), g_text,
-                         texts(text, spans)))
-        needed |= {t for t in (record.get("stated_rationale"), g_text) if t}
+                         texts(text, spans), rejection))
+        needed |= {t for t in (record.get("stated_rationale"), g_text, rejection) if t}
 
     needed = sorted(needed)
     vectors = dict(zip(needed, embed(needed))) if needed else {}
     refs = {s: embed(ts) for s, ts in ref_texts.items()}
-    for record, g_evid, g_text, sentences in prepared:
-        rows.append(score(record, g_evid, g_text, vectors, refs, sentences, negative_words))
+    for record, g_evid, g_text, sentences, rejection in prepared:
+        rows.append(score(record, g_evid, g_text, vectors, refs, sentences, negative_words, rejection))
     items = pd.DataFrame(rows)
     models = sorted(items["model"].unique())
     train_counts = symptom_counts(posts[posts["post_id"].isin(set(train_ids))]) if "labels" in posts else None

@@ -33,7 +33,7 @@ def pick(items, per_model=10, faithfulness="comprehensiveness"):
     return pd.concat(chosen)[columns].reset_index(drop=True) if chosen else pd.DataFrame(columns=columns)
 
 
-def reading_file(cases, records, posts, ann):
+def reading_file(cases, records, posts, ann, faithfulness="comprehensiveness"):
     """Markdown for reading the cases: the post split into numbered sentences, the model's rationale and
     cited sentences, and the psychologist's rationale. Private: it quotes posts."""
     by_key = {(r["model"], r["post_id"], r["symptom"]): r for r in records}
@@ -44,7 +44,7 @@ def reading_file(cases, records, posts, ann):
         sentences = texts(text_by_id[c.post_id], split_sentences(text_by_id[c.post_id]))
         cited = set(r.get("stated_evidence") or [])
         lines += [f"## {i}. {c.model} {c.symptom} ({c.correctness}), plausibility {c.plausibility:.2f}, "
-                  f"faithfulness {c.comprehensiveness:.2f}", ""]
+                  f"faithfulness {getattr(c, faithfulness):.2f}", ""]
         lines += [f"{'**' if j in cited else ''}{j}: {s}{'**' if j in cited else ''}" for j, s in enumerate(sentences)]
         lines += ["", f"- model's rationale (cited in bold): {r.get('stated_rationale')}",
                   f"- psychologist's rationale: {gold_text(ann, c.post_id, c.symptom) or '(none: not a gold symptom)'}", ""]

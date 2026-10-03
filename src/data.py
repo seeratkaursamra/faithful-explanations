@@ -34,6 +34,12 @@ PAPER_COUNTS = {
 PAPER_N_POSTS = 1484
 PAPER_N_NEGATIVES = 392
 
+# The Hugging Face release we use (irlab-udc/redsm5, commit b81b534, updated 2026-07-06, after the
+# paper) has one more suicidal-thoughts post than the paper and its own dataset card; the rows are clean
+# (checked). This is the only difference the gate accepts; anything else still stops training.
+RELEASE = "irlab-udc/redsm5@b81b5348993eacfca8eb0d67d6c2be04d0ff3931"
+KNOWN_DIFFERENCES = {"SUICIDAL_THOUGHTS": 1}
+
 # Per-label support in the authors' test split, printed by their examples/svm.ipynb. Matching all ten
 # is strong evidence our split holds the same 297 posts, which the call and seed alone cannot promise.
 AUTHORS_TEST_SUPPORT = {
@@ -98,6 +104,13 @@ def gold_text(ann, post_id, symptom):
     return " ".join(e.strip() for e in rows["explanation"] if isinstance(e, str))
 
 
+def rejection_text(ann, post_id, symptom):
+    """The annotator's notes on sentences considered and rejected for this symptom in this post (status 0),
+    joined in sentence order; empty when there are none."""
+    rows = ann[(ann["post_id"] == post_id) & (ann["DSM5_symptom"] == symptom) & (ann["status"] == 0)]
+    return " ".join(e.strip() for e in rows.sort_values("sentence_index")["explanation"] if isinstance(e, str))
+
+
 def references(ann, post_ids):
     """Every G_text per symptom over the given posts. Pass training post ids only, so no test post
     ever ends up in the set it is compared against."""
@@ -139,6 +152,7 @@ def check_against_paper(posts):
     report["matches_paper"] = (
         report["n_posts"][0] == PAPER_N_POSTS
         and report["n_negatives"][0] == PAPER_N_NEGATIVES
-        and all(ours == paper for ours, paper in report["symptom_counts"].values())
+        and all(ours - paper in (0, KNOWN_DIFFERENCES.get(s, 0)) for s, (ours, paper) in report["symptom_counts"].items())
     )
+    report["known_differences"] = {"release": RELEASE, "accepted": KNOWN_DIFFERENCES}
     return report

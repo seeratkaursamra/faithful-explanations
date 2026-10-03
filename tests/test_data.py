@@ -105,3 +105,24 @@ def test_check_split_matches_only_the_authors_exact_support():
     result = check_split(off_by_one)
     assert not result["matches_authors"]
     assert result["support"]["ANHEDONIA"] == (24, 25)
+
+
+def paper_shaped(counts):
+    """1,484 posts with 392 negatives and these symptom counts: some posts carry two symptoms, as in ReDSM5."""
+    from src.data import PAPER_N_NEGATIVES, PAPER_N_POSTS
+    labels = [s for s, n in counts.items() for _ in range(n)]
+    doubles = len(labels) - (PAPER_N_POSTS - PAPER_N_NEGATIVES)          # posts that need a second symptom
+    posts = [[labels[i], labels[-(i + 1)]] for i in range(doubles)] + [[l] for l in labels[doubles:len(labels) - doubles]]
+    posts += [["NO_SYMPTOMS"]] * PAPER_N_NEGATIVES
+    frame = pd.DataFrame({"labels": posts})
+    frame["is_negative"] = frame["labels"].map(lambda labs: labs == ["NO_SYMPTOMS"])
+    return frame
+
+
+def test_the_gate_accepts_the_known_difference_and_nothing_else():
+    from src.data import KNOWN_DIFFERENCES, PAPER_COUNTS
+    assert check_against_paper(paper_shaped(PAPER_COUNTS))["matches_paper"]
+    release = {s: n + KNOWN_DIFFERENCES.get(s, 0) for s, n in PAPER_COUNTS.items()}
+    assert check_against_paper(paper_shaped(release))["matches_paper"]
+    # the release's difference plus any other one must still stop training
+    assert not check_against_paper(paper_shaped(dict(release, FATIGUE=release["FATIGUE"] + 1)))["matches_paper"]

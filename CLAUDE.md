@@ -67,7 +67,7 @@ The full dataset has not arrived, so nothing has been run on real data yet.
 - `src/cases.py` - the qualitative cases by a fixed rule; `cases.md` quotes posts and stays in outputs/.
 - `configs/bert_baseline.yaml`, `configs/prompts.yaml`, `configs/evaluate.yaml`, `configs/attribution.yaml` -
   training recipe, the M3 prompts, the bootstrap settings, and LIME / IG / randomised-head settings
-  (joint, decoupled control, label-only for LIME perturbations).
+  (the joint prompt and the decoupled control).
 
 ## Data
 - data/redsm5_posts.csv (post_id, text); data/redsm5_annotations.csv (post_id, sentence_id,

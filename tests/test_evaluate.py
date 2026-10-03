@@ -495,7 +495,7 @@ def test_models_are_compared_only_on_items_both_have():
     assert rows["plausibility"]["contrast"] == "M2 - M3"
     assert rows["plausibility"]["diff"] == pytest.approx(-0.1)
     assert rows["plausibility"]["lo"] == pytest.approx(-0.1)     # every pair differs by 0.1: a paired interval collapses
-    assert math.isnan(rows["comprehensiveness"]["p"])                  # identical on every item: nothing to test
+    assert "comprehensiveness" not in rows          # graded on BERT, near 0/1 on the LLM: not one quantity
 
 
 
@@ -516,3 +516,30 @@ def test_m1_never_counts_toward_the_false_positive_floor():
     result = study_checks(items, BASELINE_OK, LOGS_OK)
     assert result["status"] == "clear"
     assert not any(c["condition"].startswith("M1") for c in result["checks"])
+
+
+
+def test_model_contrasts_leave_out_posts_longer_than_berts_window():
+    from src.evaluate import model_contrasts
+    m2 = pd.DataFrame([{"model": "M2", "post_id": f"p{i}", "symptom": "FATIGUE", "correctness": "TP",
+                        "plausibility": 0.6, "n_sentences": 10, "sentences_seen": 10 if i < 8 else 6} for i in range(10)])
+    m3 = m2.assign(model="M3", plausibility=0.7, sentences_seen=np.nan)
+    row = model_contrasts(pd.concat([m2, m3]), {"n_resamples": 50, "seed": 0})[0]
+    assert row["n"] == 8 and row["posts_past_window_left_out"] == 2
+
+
+def test_rejection_note_is_compared_on_false_positives_only():
+    from src.data import rejection_text
+    ann = pd.DataFrame({"post_id": ["p1", "p1", "p1"], "DSM5_symptom": ["SLEEP_ISSUES"] * 3, "status": [0, 0, 1],
+                        "sentence_index": [3, 1, 0], "explanation": ["Second note.", "First note.", "Evidence."]})
+    assert rejection_text(ann, "p1", "SLEEP_ISSUES") == "First note. Second note."
+    vectors = {"why": [1.0, 0.0], "First note. Second note.": [0.0, 1.0]}
+    fp = score(record(gold=False, stated_rationale="why"), set(), "", vectors, {}, rejection="First note. Second note.")
+    assert fp["rejection_similarity"] == pytest.approx(0.0)
+    tp = score(record(stated_rationale="why"), {0}, "", vectors, {}, rejection="First note. Second note.")
+    assert "rejection_similarity" not in tp
+
+
+def test_sentence_counts_are_recorded_for_the_length_check():
+    row = score(record(), {0}, "", {}, {}, sentences=["a.", "b.", "c."])
+    assert row["n_sentences"] == 3

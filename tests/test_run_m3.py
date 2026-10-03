@@ -74,10 +74,22 @@ def test_a_false_positive_and_a_no_symptom_post():
     assert records == []                     # nothing predicted, nothing gold: no (post, symptom) to score
 
 
-def test_a_parse_failure_gives_no_records_and_is_reported():
+def test_a_parse_failure_records_its_gold_symptoms_as_missed():
     failing = lambda *a, **k: {"ok": False, "attempts": 3, "symptoms": None, "reason": "not json"}
-    records, result = post_records("p4", "I cannot sleep.", ["SLEEP_ISSUES"], PROMPTS, failing)
-    assert records == [] and not result["ok"]
+    records, result = post_records("p4", "I cannot sleep.", ["SLEEP_ISSUES", "FATIGUE"], PROMPTS, failing)
+    assert not result["ok"]
+    assert [(r["symptom"], r["predicted"], r["gold"], r["parse_failed"]) for r in records] == \
+        [("FATIGUE", False, True, True), ("SLEEP_ISSUES", False, True, True)]
+    assert post_records("p5", "Fine.", ["NO_SYMPTOMS"], PROMPTS, failing)[0] == []
+
+
+def test_side_runs_cannot_overwrite_the_main_records(monkeypatch):
+    import sys
+    from src import run_m3
+    for flags in (["--seed", "1"], ["--temperature", "0.3"], ["--limit", "10"]):
+        monkeypatch.setattr(sys, "argv", ["run_m3", *flags])
+        with pytest.raises(SystemExit, match="its own --out"):
+            run_m3.main()
 
 
 def rec(post, symptom, evidence):

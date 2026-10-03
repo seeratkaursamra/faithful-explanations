@@ -1,6 +1,7 @@
-# licensed dataset, never committed
+# licensed dataset and its card, never committed
 data/redsm5_posts.csv
 data/redsm5_annotations.csv
+data/README.md
 
 venv/
 figures/

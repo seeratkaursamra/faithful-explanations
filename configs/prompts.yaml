@@ -47,13 +47,3 @@ decoupled: |
   Return exactly this JSON shape:
   {{"symptoms": [{{"label": "<SYMPTOM_NAME>", "evidence": [<sentence numbers>],
                   "rationale": "<one or two sentences>"}}]}}
-
-# For LIME perturbations: labels and confidence only, no rationale, to keep each call short.
-label_only: |
-  Post, one sentence per line, numbered from 0:
-
-  {numbered_post}
-
-  Return exactly this JSON shape and nothing else:
-  {{"symptoms": [{{"label": "<SYMPTOM_NAME>", "confidence": <0-100>}}]}}
-  If nothing is evidenced: {{"symptoms": [{{"label": "NO_SYMPTOMS", "confidence": <0-100>}}]}}

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .data import NO_SYMPTOMS, SYMPTOMS, check_against_paper, check_split, load, split, symptom_counts
+from .data import KNOWN_DIFFERENCES, NO_SYMPTOMS, SYMPTOMS, check_against_paper, check_split, load, split, symptom_counts
 from .lexicon import markers
 from .sentences import split as split_sentences
 from .sentences import alignment_report
@@ -102,7 +102,9 @@ def main():
           f"{m['negatives']['present_tense']:.2f}")
     print("symptom counts (ours vs paper):")
     for s, (ours, paper) in check["symptom_counts"].items():
-        print(f"  {s:<18} {ours:>5} vs {paper:>5}{'' if ours == paper else '  <-- MISMATCH'}")
+        known = KNOWN_DIFFERENCES.get(s, 0)
+        note = "" if ours == paper else f"  (known difference of the release, +{known})" if ours - paper == known else "  <-- MISMATCH"
+        print(f"  {s:<18} {ours:>5} vs {paper:>5}{note}")
     print("matches paper:", check["matches_paper"])
     authors = check_split(split(posts)[1])
     print("test split matches the authors' (per-label support from their svm notebook):", authors["matches_authors"])
