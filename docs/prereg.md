@@ -220,3 +220,20 @@ similarity-based evaluation this study makes, and the write-up will say so: the 
 the faithfulness half. As an exploratory check grounded in the post, a model's rationale on a false
 positive is also compared with the annotator's rejection note for that symptom in that post, where one
 exists (status 0 rows).
+
+### Correction to Amendment 2's timing, 2026-10-02
+
+Amendment 2 says it was made "before the data files were downloaded". That is true of the decisions and
+not of the commit. The record, from file timestamps:
+
+- 2026-09-25 19:02: the sanity check that found all four problems, with the fixes proposed (kept
+  privately), a week before access.
+- 2026-10-02, before access was announced: the fixes agreed.
+- 2026-10-02 19:12:55 to 19:13:06: the two ReDSM5 files saved into data/, while the fixes were being
+  coded. Every Amendment 2 file was saved after that, between 19:13 and 19:20; the commit is 19:21.
+
+Between the download and the commit no process read the data files. Every test reads the public sample
+or synthetic inputs (checked: the one `load` without the sample flag reads fake files in a temporary
+folder), no output under outputs/, figures/ or docs/ other than this file and the decision log was
+written after 19:12, and the newest LLM call in the cache is from 2026-09-25. No real-data number of any
+kind, descriptive or otherwise, existed when Amendment 2 was committed or when this note was written.
