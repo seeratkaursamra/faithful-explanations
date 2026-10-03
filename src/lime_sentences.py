@@ -15,6 +15,12 @@ def masks(n_sentences, n_samples, rng):
     return out
 
 
+def kernel(dropped, width):
+    """How much a perturbed post counts in the fit: posts that lost more of their sentences sit further
+    from the original and count for less. exp(-d^2 / width^2), d the fraction of sentences dropped."""
+    return np.exp(-(np.asarray(dropped, dtype=float) ** 2) / width ** 2)
+
+
 def explain(sentences, predict, n_samples=200, width=0.25, alpha=1.0, seed=0):
     """Attribution weight per sentence, plus the local model's weighted R-squared.
 
@@ -41,9 +47,7 @@ def explain(sentences, predict, n_samples=200, width=0.25, alpha=1.0, seed=0):
         return {}, float("nan")
     kept, probs = kept[scored], probs[scored]
 
-    # Posts that lost more sentences sit further from the original and count for less.
-    dropped = 1 - kept.mean(axis=1)
-    weights = np.exp(-(dropped ** 2) / width ** 2)
+    weights = kernel(1 - kept.mean(axis=1), width)
 
     local = Ridge(alpha=alpha).fit(kept, probs, sample_weight=weights)
     return ({i: float(c) for i, c in enumerate(local.coef_)},

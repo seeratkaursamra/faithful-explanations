@@ -170,3 +170,16 @@ def test_a_rationale_that_is_not_text_is_rejected():
     reply = json.dumps({"symptoms": [{"label": "FATIGUE", "evidence": [0], "rationale": ["tired", "all day"]}]})
     assert parse(reply, n_sentences=2)[1] == "rationale for FATIGUE is not text"
     assert parse(json.dumps({"symptoms": [{"label": "FATIGUE", "evidence": [0], "rationale": None}]}), 2)[0][0]["rationale"] == ""
+
+
+def test_parse_bounds():
+    one = lambda **kw: json.dumps({"symptoms": [{"label": "FATIGUE", "evidence": [0], **kw}]})
+    # confidence 0 and 100 are in range; -1 and 101 are not
+    assert parse(one(confidence=0), 3)[1] == "ok" and parse(one(confidence=100), 3)[1] == "ok"
+    assert parse(one(confidence=-1), 3)[0] is None and parse(one(confidence=101), 3)[0] is None
+    # a 7-sentence post has sentences 0 to 6: citing 6 is fine, 7 is not, nor is -1
+    cite = lambda i: json.dumps({"symptoms": [{"label": "FATIGUE", "evidence": [i]}]})
+    assert parse(cite(6), n_sentences=7)[1] == "ok"
+    assert parse(cite(7), n_sentences=7)[0] is None and parse(cite(-1), n_sentences=7)[0] is None
+    # NO_SYMPTOMS on its own is a valid answer; with one other label it is a contradiction
+    assert parse(json.dumps({"symptoms": [{"label": "NO_SYMPTOMS"}]}))[1] == "ok"

@@ -30,7 +30,7 @@ from scipy.stats import spearmanr
 
 from .data import SYMPTOMS, gold, gold_text, load, references, rejection_text, split, symptom_counts
 from .lexicon import load_nrc, markers
-from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, delta_ci, delta_did_ci, did_ci, holm, median_ci,
+from .metrics import (MIN_SUPPORT, _interval, bootstrap_ci, cliffs_delta, cosine, delta_ci, delta_did_ci, did_ci, holm, median_ci,
                       paired_rank_biserial,
                       jaccard, mann_whitney_p,
                       paired_diff_ci, wilcoxon_p,
@@ -323,8 +323,7 @@ def _rho_ci(items, keep, faithfulness, boot):
         return None, n
     draws = [_f1_faith_rho(items.iloc[rows], keep, faithfulness)[0]
              for rows in resample_posts(items["post_id"], boot["n_resamples"], boot["seed"])]
-    draws = [d for d in draws if not np.isnan(d)]
-    return (rho, float(np.percentile(draws, 2.5)), float(np.percentile(draws, 97.5))), n
+    return _interval(rho, draws), n
 
 
 def h2(items, faithfulness="comprehensiveness", boot=BOOT):
@@ -347,13 +346,17 @@ def h2(items, faithfulness="comprehensiveness", boot=BOOT):
         out["verdict"] = f"inconclusive: {n} (model, symptom) points with both F1 and {faithfulness}, need 3"
         return out
     out["spearman"] = spearman
-    if spearman[1] > 0:
-        out["verdict"] = "refuted: accuracy and faithfulness rise together"
-    elif spearman[2] < H2_MAX_UPPER:
-        out["verdict"] = "supported"
-    else:
-        out["verdict"] = f"inconclusive: the interval cannot rule out a correlation of {H2_MAX_UPPER} or more"
+    out["verdict"] = h2_verdict(spearman)
     return out
+
+
+def h2_verdict(spearman):
+    """Refuted if the interval is above zero; supported if its upper bound is below H2_MAX_UPPER."""
+    if spearman[1] > 0:
+        return "refuted: accuracy and faithfulness rise together"
+    if spearman[2] < H2_MAX_UPPER:
+        return "supported"
+    return f"inconclusive: the interval cannot rule out a correlation of {H2_MAX_UPPER} or more"
 
 
 def h4(items, micro_f1, boot=BOOT):
@@ -372,12 +375,19 @@ def h4(items, micro_f1, boot=BOOT):
     if "M2_std" in micro_f1:
         out["m2_seed_std"] = micro_f1["M2_std"]
     out["marker_density"] = bootstrap_ci(m1[column], posts=m1["post_id"], **boot)
-    cheap = out["f1_gap"] <= H4_MAX_F1_GAP
-    on_markers = out["marker_density"][1] > 0
-    out["verdict"] = "supported" if cheap and on_markers else "refuted: " + " and ".join(
-        reason for reason, failed in [(f"M1 trails M2 by {out['f1_gap']:.3f} micro-F1", not cheap),
-                                      ("M1's top sentences are not richer in marker words", not on_markers)] if failed)
+    out["verdict"] = h4_verdict(out["f1_gap"], out["marker_density"])
     return out
+
+
+def h4_verdict(f1_gap, marker_density):
+    """Supported if M1 trails M2 by at most H4_MAX_F1_GAP and the marker-density interval is above zero."""
+    cheap = f1_gap <= H4_MAX_F1_GAP
+    on_markers = marker_density[1] > 0
+    if cheap and on_markers:
+        return "supported"
+    return "refuted: " + " and ".join(reason for reason, failed in [
+        (f"M1 trails M2 by {f1_gap:.3f} micro-F1", not cheap),
+        ("M1's top sentences are not richer in marker words", not on_markers)] if failed)
 
 
 def study_checks(items, baseline=None, logs=None, boot=BOOT):

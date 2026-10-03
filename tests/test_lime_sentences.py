@@ -91,3 +91,20 @@ def test_unscored_perturbations_are_dropped_not_zeroed():
     weights, r2 = explain(SENTENCES, flaky, n_samples=200)
     assert max(weights, key=weights.get) == 2 and r2 > 0.95
     assert explain(SENTENCES, lambda s: [None] * len(s), n_samples=20) == ({}, pytest.approx(float("nan"), nan_ok=True))
+
+
+def test_one_scored_perturbation_gives_no_weights_and_two_give_a_fit():
+    import math
+    from src.lime_sentences import explain
+    one = lambda samples: [0.5] + [None] * (len(samples) - 1)
+    weights, r2 = explain(SENTENCES, one, n_samples=20)
+    assert weights == {} and math.isnan(r2)
+    two = lambda samples: [0.5, 0.4] + [None] * (len(samples) - 2)
+    assert explain(SENTENCES, two, n_samples=20)[0] != {}
+
+
+def test_the_kernel_is_exp_of_minus_squared_distance_over_width_squared():
+    from src.lime_sentences import kernel
+    assert kernel(0.0, 0.25) == pytest.approx(1.0)                    # the untouched post counts fully
+    assert kernel(0.25, 0.25) == pytest.approx(np.exp(-1))            # one width away
+    assert kernel(0.5, 0.25) == pytest.approx(np.exp(-4))             # two widths away

@@ -126,3 +126,17 @@ def test_the_gate_accepts_the_known_difference_and_nothing_else():
     assert check_against_paper(paper_shaped(release))["matches_paper"]
     # the release's difference plus any other one must still stop training
     assert not check_against_paper(paper_shaped(dict(release, FATIGUE=release["FATIGUE"] + 1)))["matches_paper"]
+
+
+def test_the_split_is_seed_42():
+    # pinned to the posts seed 42 puts in the sample's test split; another seed gives others
+    _, test = split(load("data", sample=True)[0])
+    assert sorted(test.post_id) == ["s_1270_9", "s_1955_1069", "s_1997_963", "s_329_224"]
+
+
+def test_rejection_text_keeps_only_this_posts_status_0_rows_for_this_symptom():
+    from src.data import rejection_text
+    ann = pd.DataFrame({"post_id": ["p1", "p1", "p2", "p1"], "DSM5_symptom": ["FATIGUE", "SLEEP_ISSUES", "FATIGUE", "FATIGUE"],
+                        "status": [0, 0, 0, 1], "sentence_index": [0, 1, 0, 2],
+                        "explanation": ["Mine.", "Other symptom.", "Other post.", "Evidence, not a rejection."]})
+    assert rejection_text(ann, "p1", "FATIGUE") == "Mine."

@@ -601,3 +601,38 @@ def test_h1_says_how_many_items_it_left_out():
     fp.loc[fp.index[:5], "comprehensiveness"] = np.nan
     out = h1(pd.concat([tp, fp]), "M3", boot={"n_resamples": 50, "seed": 0})
     assert out["left_out"] == {"TP": 0, "FP": 5} and out["n_fp"] == 30 and out["primary"] is True
+
+
+
+def test_run_compares_rejection_notes_on_false_positives_only():
+    posts = pd.DataFrame({"post_id": ["p1", "p2", "tr"], "text": [TEXT, "I cannot sleep.", "I never sleep."]})
+    ann = pd.DataFrame({"post_id": ["p1", "p2", "tr"], "sentence_text": ["I cannot sleep.", "I cannot sleep.", "I never sleep."],
+                        "DSM5_symptom": ["SLEEP_ISSUES"] * 3, "status": [1, 0, 1], "sentence_index": [0, 0, 0],
+                        "explanation": ["Says so.", "Mentioned, but not as a symptom.", "Never sleeping."]})
+    records = [record(stated_rationale="sleep is poor"),                                      # TP on p1
+               record(post_id="p2", gold=False, stated_evidence=[0], stated_rationale="sleep is poor")]   # FP on p2
+    items, _, _ = run(records, posts, ann, train_ids=["tr"], embed=lambda texts: [[1.0, float(len(t) % 3)] for t in texts])
+    assert "rejection_similarity" in items.columns
+    assert items.loc[0, "rejection_similarity"] != items.loc[0, "rejection_similarity"]      # NaN on the TP
+    assert not np.isnan(items.loc[1, "rejection_similarity"])
+
+
+def test_main_writes_its_three_files(tmp_path, monkeypatch):
+    import json
+    import shutil
+    import sys
+    from src import evaluate, llm
+    data = tmp_path / "data"
+    data.mkdir()
+    for name in ("redsm5_posts_sample_paraphrased.csv", "redsm5_annotations_sample_paraphrased.csv"):
+        shutil.copy(f"data/{name}", data / name)                       # the sample only, never the real files
+    rec = tmp_path / "m3.jsonl"
+    rec.write_text(json.dumps(record(post_id="s_1270_9", stated_rationale="sleep is poor")) + "\n")
+    monkeypatch.setattr(llm, "embed", lambda texts, **kw: [[1.0, float(len(t) % 3)] for t in texts])
+    monkeypatch.setattr(sys, "argv", ["evaluate", str(rec), "--data", str(data), "--out", str(tmp_path / "out"),
+                                      "--nrc", str(tmp_path / "missing.txt"), "--logs", str(tmp_path),
+                                      "--m1-metrics", str(tmp_path / "none.json"), "--m2-summary", str(tmp_path / "none.json")])
+    evaluate.main()
+    for name in ("items.csv", "summary.csv", "hypotheses.json"):
+        assert (tmp_path / "out" / name).exists()
+    assert json.loads((tmp_path / "out" / "hypotheses.json").read_text())["study"]["status"] in ("incomplete", "inconclusive")
