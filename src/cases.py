@@ -25,7 +25,7 @@ def pick(items, per_model=10, faithfulness="comprehensiveness"):
     have = have[have["plausibility"].notna() & have[faithfulness].notna()] if {"plausibility", faithfulness} <= set(
         items.columns) else have.iloc[:0]
     chosen = []
-    for model, m in have.groupby("model"):
+    for _, m in have.groupby("model"):
         low = m[m[faithfulness] <= m[faithfulness].quantile(LOW_FAITHFULNESS)]
         chosen.append(low.sort_values(["plausibility", faithfulness, "post_id", "symptom"],
                                       ascending=[False, True, True, True]).head(per_model))

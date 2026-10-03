@@ -7,10 +7,13 @@ Input is JSONL, one record per (model, post, symptom) that the model or the gold
   stated_evidence               sentence indices the model cited; null when it states nothing (M1)
   stated_rationale              its rationale text, or null
   attribution                   {"IG": {sentence: score}, "LIME": {...}}; any subset, may be empty
-  comprehensiveness             probability drop in 0-1 when stated_evidence is removed, or null
-  sufficiency                   probability drop in 0-1 when only stated_evidence is kept, or null
+  comprehensiveness             what removing stated_evidence does, or null: a probability drop in 0-1 for M2;
+                                for M3, 1 if the label disappears and 0 if not (the prereg's decision flip)
+  sufficiency                   the same with only stated_evidence kept
   ig_delta, lime_r2             optional: IG's completeness gap and LIME's local R-squared, reported as-is
   sentences_seen                optional, M2: how many leading sentences fit in BERT's window
+  comprehensiveness_confidence, sufficiency_confidence
+                                optional, M3: the confidence drops, kept beside the decision flips
   ig_random_spearman            optional, M2: IG on the trained model against IG on a randomised head
 Sentence indices refer to src.sentences.split of the post. M3's 0-100 confidence is divided by 100
 before it gets here, so every model's erasure numbers share one scale.
@@ -27,7 +30,8 @@ from scipy.stats import spearmanr
 
 from .data import SYMPTOMS, gold, gold_text, load, references, rejection_text, split, symptom_counts
 from .lexicon import load_nrc, markers
-from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, delta_ci, delta_did_ci, did_ci, holm,
+from .metrics import (MIN_SUPPORT, bootstrap_ci, cliffs_delta, cosine, delta_ci, delta_did_ci, did_ci, holm, median_ci,
+                      paired_rank_biserial,
                       jaccard, mann_whitney_p,
                       paired_diff_ci, wilcoxon_p,
                       mean_similarity, precision_at_k, precision_recall_f1, rank_agreement, resample_posts,
@@ -119,11 +123,18 @@ def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=
     if record.get("sentences_seen") is not None and g_evid:
         row["gold_past_cut"] = sum(i >= record["sentences_seen"] for i in g_evid) / len(g_evid)
 
-    if kind == "TP" and stated is not None and g_evid:
+    # Amendment 1 says no-citation items are counted and reported: as a share, TP against FP
+    if stated is not None and kind in ("TP", "FP"):
+        row["no_citation"] = float(not s_evid)
+
+    if kind == "TP" and s_evid and g_evid:
         row["evidence_jaccard"] = jaccard(s_evid, g_evid)
         row["evidence_p"], row["evidence_r"], row["evidence_f1"] = precision_recall_f1(s_evid, g_evid)
 
     attributions = {m: {int(i): v for i, v in s.items()} for m, s in (record.get("attribution") or {}).items()}
+    # an attribution over fewer than two sentences ranks nothing: an empty or failed fit, or a
+    # one-sentence post whose single sentence would match any citation trivially
+    attributions = {m: s for m, s in attributions.items() if len(s) >= 2}
     for method, scores in attributions.items():
         if s_evid:
             row[f"{method}_stated_jaccard"] = jaccard(top_k(scores, len(s_evid)), s_evid)
@@ -192,9 +203,12 @@ def explaining_models(items):
 def h1(items, model, faithfulness="comprehensiveness", boot=BOOT):
     """The primary statistic (Amendment 2: Cliff's deltas, not raw gaps) and the verdict for one model.
     The raw difference of gaps is kept as did_raw, a secondary."""
-    have = items[(items["model"] == model) & items["plausibility"].notna() & items[faithfulness].notna()]
+    m = items[items["model"] == model]
+    have = m[m["plausibility"].notna() & m[faithfulness].notna()]
     tp, fp = have[have["correctness"] == "TP"], have[have["correctness"] == "FP"]
-    out = {"model": model, "faithfulness": faithfulness, "n_tp": len(tp), "n_fp": len(fp)}
+    # items without both measures (no rationale, nothing cited, a failed erasure) drop out; say how many
+    out = {"model": model, "faithfulness": faithfulness, "primary": model == "M3", "n_tp": len(tp), "n_fp": len(fp),
+           "left_out": {k: int((m["correctness"] == k).sum()) - len(g) for k, g in (("TP", tp), ("FP", fp))}}
     if len(fp) < MIN_FALSE_POSITIVES or not len(tp):
         out["verdict"] = (f"inconclusive: {len(fp)} false positives with both plausibility and "
                           f"{faithfulness}, fewer than {MIN_FALSE_POSITIVES}")
@@ -262,16 +276,18 @@ def h3_verdict(rows):
     return f"refuted, on {', '.join(targets)}"
 
 
-def randomised_check(items):
+def randomised_check(items, boot=BOOT):
     """Did IG fall apart when the classifier head was randomised? Median |Spearman| between the trained
-    and randomised rankings, over every item that has one. None when the check was not run."""
+    and randomised rankings across posts (each post once, at its mean), with an interval. None when the
+    check was not run."""
     if "ig_random_spearman" not in items:
         return None
-    rho = items["ig_random_spearman"].dropna().abs()
+    rho = items.assign(a=items["ig_random_spearman"].abs()).groupby("post_id")["a"].mean().dropna()
     if not len(rho):
         return None
-    median = float(rho.median())
-    return {"n": len(rho), "median_abs_spearman": median, "degraded": median < RANDOMISED_MAX_AGREEMENT}
+    median, lo, hi = median_ci(rho, **boot)
+    return {"n_posts": len(rho), "median_abs_spearman": median, "interval": (lo, hi),
+            "degraded": median < RANDOMISED_MAX_AGREEMENT}
 
 
 def per_symptom(items, faithfulness="comprehensiveness"):
@@ -352,6 +368,9 @@ def h4(items, micro_f1, boot=BOOT):
         out["verdict"] = "inconclusive: needs both micro-F1s and M1 marker density"
         return out
     out["f1_gap"] = micro_f1["M2"] - micro_f1["M1"]
+    # M2's micro-F1 is a five-seed mean; its spread is the honest error bar on the gap
+    if "M2_std" in micro_f1:
+        out["m2_seed_std"] = micro_f1["M2_std"]
     out["marker_density"] = bootstrap_ci(m1[column], posts=m1["post_id"], **boot)
     cheap = out["f1_gap"] <= H4_MAX_F1_GAP
     on_markers = out["marker_density"][1] > 0
@@ -361,34 +380,39 @@ def h4(items, micro_f1, boot=BOOT):
     return out
 
 
-def study_checks(items, baseline=None, logs=None):
+def study_checks(items, baseline=None, logs=None, boot=BOOT):
     """Every condition under which the prereg calls the whole study inconclusive, each marked triggered,
     clear, or not run. A missing input is "not run", never a pass. `baseline` is the five-seed
     summary.json; `logs` maps "M2" and "M3" to their run logs."""
     logs = logs or {}
     checks = []
 
-    def check(condition, value, triggered):
-        checks.append({"condition": condition, "value": value,
+    def check(condition, value, triggered, interval=None):
+        checks.append({"condition": condition, "value": value, "interval": interval,
                        "status": "not run" if triggered is None else "triggered" if triggered else "clear"})
 
     check("BERT baseline outside 0.51 +/- 0.02 micro-F1",
           None if baseline is None else baseline["micro_f1"]["mean"],
           None if baseline is None else not baseline["within_tolerance"])
 
-    agreement = items.loc[items["model"] == "M2", "ig_lime_spearman"].dropna() if "ig_lime_spearman" in items else []
-    median = float(np.median(agreement)) if len(agreement) else None
+    # across test posts, as the prereg says: a post with several symptoms counts once, at its mean
+    agreement = (items[items["model"] == "M2"].groupby("post_id")["ig_lime_spearman"].mean().dropna()
+                 if "ig_lime_spearman" in items else [])
+    median, lo, hi = median_ci(agreement, **boot) if len(agreement) else (None, None, None)
     check(f"IG and LIME on M2: median Spearman below {MIN_IG_LIME_AGREEMENT}", median,
-          None if median is None else median < MIN_IG_LIME_AGREEMENT)
+          None if median is None else median < MIN_IG_LIME_AGREEMENT, None if median is None else (lo, hi))
 
-    randomised = randomised_check(items)
+    randomised = randomised_check(items, boot)
     check(f"IG does not degrade on a randomised head: median |Spearman| {RANDOMISED_MAX_AGREEMENT} or above",
           None if randomised is None else randomised["median_abs_spearman"],
-          None if randomised is None else not randomised["degraded"])
+          None if randomised is None else not randomised["degraded"],
+          None if randomised is None else randomised["interval"])
 
     rates = {}
     if "M3" in logs:
         rates["M3 joint"] = logs["M3"]["failure_rate"]
+        if "call_failure_rate" in logs["M3"]:
+            rates["M3 every call"] = logs["M3"]["call_failure_rate"]
     if "M2" in logs and logs["M2"]["decoupled_asked"]:
         rates["M2 decoupled control"] = logs["M2"]["decoupled_failures"] / logs["M2"]["decoupled_asked"]
     check(f"LLM parse failures above {MAX_PARSE_FAILURE:.0%} after retries", rates or None,
@@ -396,16 +420,25 @@ def study_checks(items, baseline=None, logs=None):
 
     # Amendment 2: only models that state a rationale; M1's correctness split tests nothing
     explaining = explaining_models(items)
+    # Amendment 3: the false positives H1 can use, with both plausibility and comprehensiveness, so this
+    # check and H1 cannot disagree
     for model in explaining:
-        n_fp = int((items[items["model"] == model]["correctness"] == "FP").sum())
-        check(f"{model}: fewer than {MIN_FALSE_POSITIVES} false positives", n_fp, n_fp < MIN_FALSE_POSITIVES)
+        m = items[(items["model"] == model) & (items["correctness"] == "FP")]
+        n_fp = int((m["plausibility"].notna() & m["comprehensiveness"].notna()).sum()) if "comprehensiveness" in m else 0
+        check(f"{model}: fewer than {MIN_FALSE_POSITIVES} usable false positives", n_fp, n_fp < MIN_FALSE_POSITIVES)
     if not explaining:
         check(f"fewer than {MIN_FALSE_POSITIVES} false positives in a model that explains itself", None, None)
 
     statuses = {c["status"] for c in checks}
     overall = "inconclusive" if "triggered" in statuses else "incomplete" if "not run" in statuses else "clear"
-    return {"status": overall, "checks": checks}
+    failed = items.groupby("model")["parse_failed"].sum().astype(int).to_dict() if "parse_failed" in items else {}
+    return {"status": overall, "checks": checks, "parse_failed_items": failed}
 
+
+# The prereg's secondary outcomes run through H1 in place of comprehensiveness: M3's confidence drop,
+# attribution against the stated evidence by IG and by LIME, and the same at k = 2.
+SECONDARY_FAITHFULNESS = ["comprehensiveness_confidence", "IG_stated_jaccard", "LIME_stated_jaccard",
+                          "IG_stated_jaccard_k2", "LIME_stated_jaccard_k2"]
 
 # Metrics that mean the same thing whichever model produced them, so two models can be compared on them.
 # Not comprehensiveness or sufficiency: graded probability drops on BERT, near 0/1 flips on the LLM.
@@ -414,7 +447,7 @@ SHARED_METRICS = ["plausibility", "own_similarity", "evidence_jaccard", "evidenc
 
 def _paired(a, b, posts, boot):
     mean, lo, hi = paired_diff_ci(a, b, posts=posts, **boot)
-    return {"n": len(a), "diff": mean, "lo": lo, "hi": hi, "p": wilcoxon_p(a, b)}
+    return {"n": len(a), "diff": mean, "lo": lo, "hi": hi, "p": wilcoxon_p(a, b), "rank_biserial": paired_rank_biserial(a, b)}
 
 
 def method_contrasts(items, boot=BOOT):
@@ -477,14 +510,17 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, m
     for record, g_evid, g_text, sentences, rejection in prepared:
         rows.append(score(record, g_evid, g_text, vectors, refs, sentences, negative_words, rejection))
     items = pd.DataFrame(rows)
-    models = sorted(items["model"].unique())
     train_counts = symptom_counts(posts[posts["post_id"].isin(set(train_ids))]) if "labels" in posts else None
     explaining = explaining_models(items)
-    hypotheses = {"study": study_checks(items, baseline, logs),
+    hypotheses = {"study": study_checks(items, baseline, logs, boot),
                   "H1": [h1(items, m, boot=boot) for m in explaining],
                   "H2": [h2(items, boot=boot)],
                   "H3": [h3(items, m, train_counts, boot=boot) for m in explaining],
                   "H4": [h4(items, micro_f1 or {}, boot)],
+                  # the prereg's secondary outcomes: the same analysis with other faithfulness measures
+                  "H1_secondary": [h1(items, m, faithfulness=f, boot=boot) for m in explaining
+                                   for f in SECONDARY_FAITHFULNESS
+                                   if f in items and items.loc[items["model"] == m, f].notna().any()],
                   "paired": method_contrasts(items, boot) + model_contrasts(items, boot)}
     return items, summarise(items, boot), hypotheses
 
@@ -511,7 +547,11 @@ def main():
         micro_f1["M1"] = json.loads(Path(args.m1_metrics).read_text())["micro_f1"]
     baseline = json.loads(Path(args.m2_summary).read_text()) if Path(args.m2_summary).exists() else None
     if baseline:
-        micro_f1["M2"] = baseline["micro_f1"]["mean"]
+        micro_f1["M2"], micro_f1["M2_std"] = baseline["micro_f1"]["mean"], baseline["micro_f1"]["std"]
+    # only H4 and marker density need the lexicon; without it they are skipped, not the whole harness
+    negative_words = load_nrc(args.nrc) if Path(args.nrc).exists() else None
+    if negative_words is None:
+        print(f"no NRC file at {args.nrc}: marker density and H4 are skipped")
     logs = {m: json.loads((Path(args.logs) / f"{m.lower()}_log.json").read_text())
             for m in ("M2", "M3") if (Path(args.logs) / f"{m.lower()}_log.json").exists()}
     boot = yaml.safe_load(Path(args.config).read_text())["bootstrap"]
@@ -520,7 +560,7 @@ def main():
     train, _ = split(posts)
     records = [json.loads(line) for path in args.records for line in Path(path).read_text().splitlines() if line]
     items, summary, hypotheses = run(records, posts, ann, train["post_id"], partial(embed, model=args.embed_model),
-                                     boot, load_nrc(args.nrc), micro_f1, baseline, logs)
+                                     boot, negative_words, micro_f1, baseline, logs)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

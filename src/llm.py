@@ -51,6 +51,10 @@ def parse(text, n_sentences=None, expected=None):
         if n_sentences is not None and any(i < 0 or i >= n_sentences for i in evidence):
             return None, f"evidence for {label} cites a sentence outside the post"
 
+        rationale = entry.get("rationale", "")
+        if rationale is not None and not isinstance(rationale, str):
+            return None, f"rationale for {label} is not text"
+
         confidence = entry.get("confidence")
         if confidence is not None and not (isinstance(confidence, (int, float))
                                            and not isinstance(confidence, bool)
@@ -58,7 +62,7 @@ def parse(text, n_sentences=None, expected=None):
             return None, f"confidence for {label} is not a number in 0-100"
 
         out.append({"label": label, "evidence": sorted(set(evidence)),
-                    "rationale": entry.get("rationale", ""), "confidence": confidence})
+                    "rationale": rationale or "", "confidence": confidence})
 
     labels = [s["label"] for s in out]
     if len(labels) != len(set(labels)):

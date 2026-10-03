@@ -63,7 +63,9 @@ def test_post_records_writes_predicted_and_missed_symptoms():
     tp, fn = by["SLEEP_ISSUES"], by["FATIGUE"]
     assert (tp["predicted"], tp["gold"], fn["predicted"], fn["gold"]) == (True, True, False, True)
     assert tp["stated_evidence"] == [0] and tp["stated_rationale"] == "mentions sleep"
-    assert tp["comprehensiveness"] == pytest.approx(0.9) and tp["sufficiency"] == pytest.approx(0.0)
+    # the label disappears without its evidence (a flip, 1) and stays with only its evidence (0)
+    assert tp["comprehensiveness"] == 1.0 and tp["sufficiency"] == 0.0
+    assert tp["comprehensiveness_confidence"] == pytest.approx(0.9) and tp["sufficiency_confidence"] == pytest.approx(0.0)
     assert fn["stated_evidence"] is None and fn["comprehensiveness"] is None
 
 
@@ -168,3 +170,29 @@ def test_counting_counts_every_call_and_passes_everything_through():
     counted = counting(lambda a, b=0: a + b)
     assert counted(1, b=2) == 3 and counted(5) == 5
     assert len(counted.calls) == 2
+
+
+
+def test_a_label_that_survives_erasure_at_lower_confidence_is_no_flip():
+    # sentence 0 is cited, but sentence 1 also mentions sleep, so the label survives at 60 without sentence 0
+    def ask(prompt, system, n_sentences=None):
+        lines = [s for _, s in re.findall(r"^(\d+): (.*)$", prompt, flags=re.M)]
+        if not any("sleep" in s.lower() for s in lines):
+            return {"ok": True, "attempts": 1, "symptoms": [{"label": "NO_SYMPTOMS", "evidence": [], "rationale": "",
+                                                             "confidence": 80}]}
+        conf = 90 if "I cannot sleep." in lines else 60
+        return {"ok": True, "attempts": 1, "symptoms": [{"label": "SLEEP_ISSUES", "evidence": [0], "rationale": "r",
+                                                         "confidence": conf}]}
+    records, _ = post_records("p1", "I cannot sleep. Sleep is hard.", ["SLEEP_ISSUES"], PROMPTS, ask)
+    r = records[0]
+    assert r["comprehensiveness"] == 0.0                                  # the decision did not flip
+    assert r["comprehensiveness_confidence"] == pytest.approx(0.3)        # though confidence fell 0.9 -> 0.6
+
+
+def test_counting_also_counts_replies_that_never_parsed():
+    from src.run_m3 import counting
+    replies = iter([{"ok": True}, {"ok": False}, {"ok": True}])
+    counted = counting(lambda: next(replies))
+    for _ in range(3):
+        counted()
+    assert len(counted.calls) == 3 and len(counted.failures) == 1

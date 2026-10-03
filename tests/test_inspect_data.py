@@ -1,5 +1,3 @@
-import pytest
-
 from src.data import load
 from src.inspect_data import describe
 

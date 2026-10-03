@@ -91,6 +91,10 @@ def test_records_cover_predicted_and_gold_and_nothing_else():
     sleep = next(r for r in recs if r["symptom"] == "SLEEP_ISSUES" and r["post_id"] == "a")
     assert set(sleep["attribution"]["M1"]) == {"0", "1"}      # one score per sentence, keyed as JSON keeps it
     assert sleep["stated_evidence"] is None and sleep["comprehensiveness"] is None
+    # the record keeps the whole decomposition: sentences + parts = the logit
+    from scipy.special import logit
+    p = probs[0, m["classes"].index("SLEEP_ISSUES")]
+    assert sum(sleep["attribution"]["M1"].values()) + sum(sleep["logit_parts"].values()) == pytest.approx(logit(p))
 
 
 def test_m1_run_records_its_runtime(tmp_path, monkeypatch):

@@ -291,10 +291,15 @@ def test_gold_past_the_cut_is_reported_for_m2():
 def test_randomised_check_uses_the_median_absolute_agreement():
     from src.evaluate import randomised_check
     # a reversed ranking (-0.9) is as much "not degraded" as a kept one: it is still the text's structure
-    kept = pd.DataFrame({"ig_random_spearman": [0.9, -0.9, 0.8, np.nan]})
-    assert randomised_check(kept) == {"n": 3, "median_abs_spearman": pytest.approx(0.9), "degraded": False}
-    fell_apart = pd.DataFrame({"ig_random_spearman": [0.1, -0.2, 0.3]})
-    assert randomised_check(fell_apart)["degraded"]
+    kept = pd.DataFrame({"post_id": ["a", "b", "c", "d"], "ig_random_spearman": [0.9, -0.9, 0.8, np.nan]})
+    result = randomised_check(kept, {"n_resamples": 100, "seed": 0})
+    assert (result["n_posts"], result["median_abs_spearman"], result["degraded"]) == (3, pytest.approx(0.9), False)
+    assert result["interval"][0] <= 0.9 <= result["interval"][1]
+    # one post with two items counts once, at its mean |rho|: posts a (0.9, 0.1 -> 0.5), b (0.2), c (0.3)
+    by_post = pd.DataFrame({"post_id": ["a", "a", "b", "c"], "ig_random_spearman": [0.9, -0.1, 0.2, 0.3]})
+    assert randomised_check(by_post, {"n_resamples": 50, "seed": 0})["median_abs_spearman"] == pytest.approx(0.3)
+    fell_apart = pd.DataFrame({"post_id": ["a", "b", "c"], "ig_random_spearman": [0.1, -0.2, 0.3]})
+    assert randomised_check(fell_apart, {"n_resamples": 50, "seed": 0})["degraded"]
     assert randomised_check(pd.DataFrame({"x": [1]})) is None
 
 
@@ -411,9 +416,10 @@ def test_h4_a_positive_density_whose_interval_crosses_zero_is_not_enough():
 
 def study_items(n_fp=40, ig_lime=0.5, random_rho=0.2):
     rows = [{"model": "M2", "post_id": f"t{i}", "symptom": "FATIGUE", "correctness": "TP", "plausibility": 0.6,
-             "ig_lime_spearman": ig_lime, "ig_random_spearman": random_rho} for i in range(10)]
+             "comprehensiveness": 0.4, "ig_lime_spearman": ig_lime, "ig_random_spearman": random_rho} for i in range(10)]
     rows += [{"model": "M2", "post_id": f"f{i}", "symptom": "FATIGUE", "correctness": "FP", "plausibility": 0.6,
-              "ig_lime_spearman": ig_lime, "ig_random_spearman": random_rho} for i in range(n_fp)]
+              "comprehensiveness": 0.2, "ig_lime_spearman": ig_lime, "ig_random_spearman": random_rho}
+             for i in range(n_fp)]
     return pd.DataFrame(rows)
 
 
@@ -543,3 +549,55 @@ def test_rejection_note_is_compared_on_false_positives_only():
 def test_sentence_counts_are_recorded_for_the_length_check():
     row = score(record(), {0}, "", {}, {}, sentences=["a.", "b.", "c."])
     assert row["n_sentences"] == 3
+
+
+
+# --- the full audit's section 2 ---------------------------------------------------------------------------
+
+def test_the_fp_floor_counts_only_false_positives_h1_can_use():
+    from src.evaluate import study_checks
+    items = study_items(n_fp=40)
+    items.loc[items["correctness"] == "FP", "comprehensiveness"] = [0.2] * 25 + [np.nan] * 15   # 15 erasures failed
+    result = study_checks(items, BASELINE_OK, LOGS_OK)
+    check = next(c for c in result["checks"] if "usable false positives" in c["condition"])
+    assert check["value"] == 25 and check["status"] == "triggered"
+
+
+def test_every_call_counts_toward_the_parse_failure_limit():
+    from src.evaluate import study_checks
+    logs = {**LOGS_OK, "M3": {"failure_rate": 0.02, "call_failure_rate": 0.15}}      # joint fine, erasure calls not
+    assert status_of(study_checks(study_items(), BASELINE_OK, logs), "parse failures") == "triggered"
+
+
+def test_ig_lime_agreement_is_a_median_across_posts():
+    from src.evaluate import study_checks
+    # one post with nine disagreeing items, four posts with one agreeing item each: per item the median is
+    # low, per post it is high
+    rows = [{"model": "M2", "post_id": "long", "symptom": f"S{i}", "correctness": "TP", "plausibility": 0.6,
+             "comprehensiveness": 0.4, "ig_lime_spearman": -0.5} for i in range(9)]
+    rows += [{"model": "M2", "post_id": f"p{i}", "symptom": "FATIGUE", "correctness": "TP", "plausibility": 0.6,
+              "comprehensiveness": 0.4, "ig_lime_spearman": 0.8} for i in range(4)]
+    items = pd.DataFrame(rows)
+    check = next(c for c in study_checks(items, BASELINE_OK, LOGS_OK)["checks"] if "IG and LIME" in c["condition"])
+    assert check["value"] == pytest.approx(0.8) and check["status"] == "clear"
+
+
+def test_nothing_cited_is_counted_and_scores_no_evidence_overlap():
+    row = score(record(stated_evidence=[]), {0}, "", {}, {})
+    assert row["no_citation"] == 1.0
+    assert "evidence_jaccard" not in row and "evidence_f1" not in row
+    assert score(record(), {0}, "", {}, {})["no_citation"] == 0.0
+
+
+def test_an_attribution_over_fewer_than_two_sentences_is_left_out():
+    assert "LIME_stated_jaccard" not in score(record(attribution={"LIME": {}}), {0}, "", {}, {})
+    assert "LIME_stated_jaccard" not in score(record(stated_evidence=[0], attribution={"LIME": {"0": 1.0}}), {0}, "", {}, {})
+    assert "LIME_stated_jaccard" in score(record(stated_evidence=[0], attribution={"LIME": {"0": 1.0, "1": 0.2}}), {0}, "", {}, {})
+
+
+def test_h1_says_how_many_items_it_left_out():
+    tp = items_frame(40, 0, 0, 0).assign(plausibility=0.8, comprehensiveness=0.6)
+    fp = items_frame(0, 35, 0, 0).assign(plausibility=0.8, comprehensiveness=0.1)
+    fp.loc[fp.index[:5], "comprehensiveness"] = np.nan
+    out = h1(pd.concat([tp, fp]), "M3", boot={"n_resamples": 50, "seed": 0})
+    assert out["left_out"] == {"TP": 0, "FP": 5} and out["n_fp"] == 30 and out["primary"] is True

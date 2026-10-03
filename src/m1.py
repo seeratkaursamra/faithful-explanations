@@ -94,10 +94,12 @@ def records(model, posts, probs, threshold=0.5):
             predicted, is_gold = bool(p[j] > threshold), label in gold
             if label == NO_SYMPTOMS or not (predicted or is_gold):
                 continue
-            scores, _ = explain(model, text, spans, label)
+            scores, parts = explain(model, text, spans, label)
             out.append({"model": "M1", "post_id": post_id, "symptom": label, "predicted": predicted,
                         "gold": is_gold, "stated_evidence": None, "stated_rationale": None,
                         "attribution": {"M1": {str(i): s for i, s in scores.items()}},
+                        # with these, the sentence scores add up to the logit exactly
+                        "logit_parts": parts,
                         "comprehensiveness": None, "sufficiency": None})
     return out
 

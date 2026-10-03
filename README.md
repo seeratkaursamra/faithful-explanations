@@ -8,9 +8,10 @@ Reddit posts labelled at the sentence level for the nine DSM-5 symptoms of a maj
 each label with a psychologist's written rationale. It picks up a question STEP-EZ (Farruque et al.,
 2021) left open: its explanation score could not tell a meaningful explanation from a short one.
 
-**Status:** everything is built and tested (172 tests) but nothing has run on real data yet, because
-ReDSM5 access is gated and still pending. The analysis is pre-registered in `docs/prereg.md`, dated
-before any result existed.
+**Status:** everything is built and tested (201 tests). The data arrived on 2026-10-02: it passes the
+checks against the paper, and the authors' SVM runs on it; the models have not been run yet. The analysis
+is pre-registered in `docs/prereg.md`, with three dated amendments, all made before any explanation,
+attribution or LLM output on the real data existed (each says exactly what did exist).
 
 ## The idea
 
@@ -140,7 +141,7 @@ to force one.
 ## Try it now, without the data
 
 ```bash
-make test             # 172 tests, about 6 s
+make test             # 201 tests, about 15 s
 make inspect-sample   # the data checks on the 17-post sample
 ```
 

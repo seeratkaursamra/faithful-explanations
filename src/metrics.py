@@ -1,6 +1,6 @@
 """Explanation metrics per (post, symptom), and the tests that aggregate them across posts."""
 import numpy as np
-from scipy.stats import mannwhitneyu, spearmanr, wilcoxon
+from scipy.stats import mannwhitneyu, rankdata, spearmanr, wilcoxon
 
 # Below this many test examples a per-symptom number is reported but not argued from.
 MIN_SUPPORT = 10
@@ -221,6 +221,25 @@ def delta_did_ci(plaus_correct, faith_correct, plaus_wrong, faith_wrong, posts_c
     groups = [_ids(posts_correct, len(plaus_correct), "c"), _ids(posts_wrong, len(plaus_wrong), "w")]
     observed = did(np.arange(len(plaus_correct)), np.arange(len(plaus_wrong)))
     return _interval(observed, [did(i, j) for i, j in _post_draws(groups, n_resamples, seed)])
+
+
+def paired_rank_biserial(a, b):
+    """Effect size for paired items, the companion of the Wilcoxon test: rank the non-zero differences
+    by size, then (sum of ranks where a > b - sum where a < b) / all ranks, in [-1, 1]."""
+    d = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    d = d[d != 0]
+    if not len(d):
+        return 0.0
+    ranks = rankdata(np.abs(d))
+    return float((ranks[d > 0].sum() - ranks[d < 0].sum()) / ranks.sum())
+
+
+def median_ci(values, n_resamples=1000, seed=0):
+    """Median with a 95% percentile bootstrap interval. Pass one value per post, so posts are resampled."""
+    values = np.asarray(values, dtype=float)
+    rng = np.random.default_rng(seed)
+    draws = [np.median(rng.choice(values, len(values), replace=True)) for _ in range(n_resamples)]
+    return _interval(np.median(values), draws)
 
 
 def wilcoxon_p(a, b):

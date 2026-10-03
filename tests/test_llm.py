@@ -164,3 +164,9 @@ def test_ask_retries_a_decoupled_reply_with_the_wrong_labels():
     result = ask("p", "s", n_sentences=5, expected=["SLEEP_ISSUES"], call=call)
     assert result["ok"] and result["attempts"] == 2
     assert "was asked to explain exactly ['SLEEP_ISSUES']" in seen[1]
+
+
+def test_a_rationale_that_is_not_text_is_rejected():
+    reply = json.dumps({"symptoms": [{"label": "FATIGUE", "evidence": [0], "rationale": ["tired", "all day"]}]})
+    assert parse(reply, n_sentences=2)[1] == "rationale for FATIGUE is not text"
+    assert parse(json.dumps({"symptoms": [{"label": "FATIGUE", "evidence": [0], "rationale": None}]}), 2)[0][0]["rationale"] == ""

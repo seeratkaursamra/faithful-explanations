@@ -101,3 +101,13 @@ def test_alignment_report_counts_every_row_once():
     assert counts["exact"] == 1 and counts["contains"] == 1 and counts["none"] == 1
     assert counts["id_equals_index"] == 2
     assert failures == [("p1", "p1_9")]
+
+
+def test_word_overlap_exactly_at_the_threshold_counts():
+    # neither string contains the other, so only the overlap rule can match: {a, b, x} vs {a, b, y}
+    # share 2 of 4 words, exactly the 0.5 threshold, which counts ("at least", not "more than")
+    text = "a b y."
+    assert align("a b x", text, split(text), threshold=0.5) == (0, "overlap")
+    # {a, b, c, x} vs {a, b, y, z}: 2 of 6, under the threshold
+    text = "a b y z."
+    assert align("a b c x", text, split(text), threshold=0.5) == (-1, "none")

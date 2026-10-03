@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import yaml
 from transformers import BertForSequenceClassification, BertTokenizer
@@ -50,6 +51,11 @@ def sentences_seen(text, spans, tokenizer, max_len=512):
     are always the first ones, and their indices are the same as in the whole post."""
     cut = set(truncated(text, spans, tokenizer, max_len))
     return next((i for i in range(len(spans)) if i in cut), len(spans))
+
+
+def finite(x):
+    """NaN as None, so the records stay valid JSON (a one-sentence post has no Spearman and no LIME fit)."""
+    return None if x is None or x != x else x
 
 
 def remembered(predict):
@@ -107,9 +113,10 @@ def post_records(post_id, text, gold_labels, classes, predict, ig, explain_why, 
         if label in labels:
             ig_scores, record["ig_delta"] = ig(text, spans, j)
             if ig_random is not None:
-                record["ig_random_spearman"] = rank_agreement(ig_scores, ig_random(text, spans, j)[0])
-            lime_scores, record["lime_r2"] = lime_sentences.explain(sentences, lambda ps, j=j: predict(ps)[:, j],
+                record["ig_random_spearman"] = finite(rank_agreement(ig_scores, ig_random(text, spans, j)[0]))
+            lime_scores, lime_r2 = lime_sentences.explain(sentences, lambda ps, j=j: predict(ps)[:, j],
                                                                     **lime_cfg)
+            record["lime_r2"] = finite(lime_r2)
             record["attribution"] = {"IG": {str(i): s for i, s in ig_scores.items()},
                                      "LIME": {str(i): s for i, s in lime_scores.items()}}
             if label in stated:
@@ -154,7 +161,9 @@ def main():
     ap.add_argument("--prompts", default="configs/prompts.yaml")
     ap.add_argument("--config", default="configs/attribution.yaml")
     ap.add_argument("--out", default=MAIN_OUT)
-    ap.add_argument("--threshold", type=float, default=0.5)
+    ap.add_argument("--bert-config", default="configs/bert_baseline.yaml",
+                    help="max_len and threshold come from the recipe the checkpoint was trained with")
+    ap.add_argument("--threshold", type=float, default=None, help="overrides the recipe's threshold")
     ap.add_argument("--limit", type=int, default=None, help="first N test posts only, for a trial run")
     ap.add_argument("--allow-mismatch", action="store_true", help="for the public sample")
     ap.add_argument("--sanity", action="store_true", help="also IG on a randomised head (doubles IG time)")
@@ -180,32 +189,46 @@ def main():
     cfg = yaml.safe_load(Path(args.config).read_text())
     prompts = yaml.safe_load(Path(args.prompts).read_text())
 
+    recipe = yaml.safe_load(Path(args.bert_config).read_text())
+    max_len = recipe["max_len"]
+    threshold = recipe["threshold"] if args.threshold is None else args.threshold
+
     device = pick_device()
     tokenizer = BertTokenizer.from_pretrained(args.checkpoint)
     model = BertForSequenceClassification.from_pretrained(args.checkpoint).to(device)
-    predict = bert_predict(model, tokenizer, device)
+    predict = bert_predict(model, tokenizer, device, max_len)
+
+    # the checkpoint must be the model training scored: its test predictions should come back unchanged
+    checkpoint_diff = None
+    scored = Path(args.checkpoint).parent / "test_probs.csv"
+    if scored.exists():
+        saved = pd.read_csv(scored).set_index("post_id")[classes]
+        again = predict([texts(t, split_sentences(t)) for t in test["text"]])
+        checkpoint_diff = float(np.abs(again - saved.loc[list(test["post_id"])].to_numpy()).max())
+        if checkpoint_diff > 1e-3:
+            print(f"warning: this checkpoint's predictions differ from {scored} by up to {checkpoint_diff:.4f}")
 
     def ig(text, spans, j):
-        return integrated_gradients(model, tokenizer, text, spans, j, **cfg["ig"])
+        return integrated_gradients(model, tokenizer, text, spans, j, max_len=max_len, **cfg["ig"])
 
     def explain_why(sentences, labels):
         return decoupled(sentences, labels, prompts, ask)
 
     def seen(text, spans):
-        return sentences_seen(text, spans, tokenizer)
+        return sentences_seen(text, spans, tokenizer, max_len)
 
     ig_random = None
     if args.sanity:
         random = randomised_head(model, cfg["sanity"]["seed"])
 
         def ig_random(text, spans, j):
-            return integrated_gradients(random, tokenizer, text, spans, j, **cfg["ig"])
+            return integrated_gradients(random, tokenizer, text, spans, j, max_len=max_len, **cfg["ig"])
 
     records, failed, asked = [], [], 0
     start = time.time()
     for row in test.itertuples():
         recs, result = post_records(row.post_id, row.text, row.labels, classes, predict, ig, explain_why,
-                                    cfg["lime"], args.threshold, seen, ig_random)
+                                    cfg["lime"], threshold, seen, ig_random)
         records += recs
         if result is not None:
             asked += 1
@@ -217,7 +240,8 @@ def main():
     deltas = [abs(r["ig_delta"]) for r in records if "ig_delta" in r]
     log = {"posts": len(test), "decoupled_asked": asked, "decoupled_failures": len(failed), "failed_posts": failed,
            "ig_delta_max": max(deltas, default=None), "ig_delta_median": float(np.median(deltas)) if deltas else None,
-           "checkpoint": args.checkpoint, "device": str(device), "sanity": args.sanity,
+           "checkpoint": args.checkpoint, "checkpoint_check_max_diff": checkpoint_diff, "max_len": max_len,
+           "threshold": threshold, "device": str(device), "sanity": args.sanity,
            "seconds": round(time.time() - start, 1), "seconds_per_post": round((time.time() - start) / len(test), 2)}
     (out / "m2_log.json").write_text(json.dumps(log, indent=2))
     print(f"{len(records)} records from {len(test)} posts; decoupled failures {len(failed)} of {asked}; "

@@ -27,7 +27,7 @@ logged, not a quiet change.
 Built so far: data layer, sentence segmentation + gold alignment, metrics, BERT baseline, LIME over
 sentences, Integrated Gradients, lexicon markers, Ollama client with embeddings, pipeline figure.
 M1 linear model, the evaluation harness, and every runner that produces the harness's input.
-The full dataset has not arrived, so nothing has been run on real data yet.
+The data arrived 2026-10-02 (release b81b534); inspect and the SVM have run on it, the models have not.
 
 ## Code map
 - `src/data.py` - the only place the label scheme and the split live. Everything else imports `load`,
@@ -80,8 +80,8 @@ The full dataset has not arrived, so nothing has been run on real data yet.
   Reported 0.51 micro-F1 / 0.36 macro-F1 (single unseeded run); tolerance +/- 0.02 over 5 seeds.
 - `make inspect` must print "matches paper: True" before any modelling. It also checks the test split against
   the authors' per-label support (from their svm notebook); `make svm` should then give 0.39 / 0.28 exactly. `require_paper_match` in the
-  config makes training refuse otherwise; `--allow-mismatch` / `make inspect-sample` is only for the
-  public sample.
+  config makes training refuse otherwise (set it false for a sample run); `--allow-mismatch` is for
+  inspect, m1, run_m2 and run_m3 on the public sample, and `make inspect-sample` uses it.
 
 ## Commands
 ```bash

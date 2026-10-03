@@ -238,3 +238,65 @@ def test_agreement_counts_two_empty_answers_as_full_agreement():
     assert agreement(set(), set()) == 1.0
     assert agreement({"A"}, {"A", "B"}) == pytest.approx(0.5)
     assert agreement({"A"}, set()) == 0.0
+
+
+# --- the full audit's untested behaviours, each with an answer worked out by hand -------------------------
+
+def test_delta_did_is_faithfulness_minus_plausibility():
+    from src.metrics import delta_did_ci
+    # faithfulness: correct [3, 4] vs wrong [1, 2] -> every pair correct > wrong -> delta +1
+    # plausibility: correct [1, 2] vs wrong [1, 2] -> pairs tie or split evenly -> delta 0
+    observed, _, _ = delta_did_ci([1, 2], [3, 4], [1, 2], [1, 2], n_resamples=50)
+    assert observed == pytest.approx(1.0)
+    # swap the roles: plausibility separates, faithfulness does not -> -1, so the sign is pinned
+    observed, _, _ = delta_did_ci([3, 4], [1, 2], [1, 2], [1, 2], n_resamples=50)
+    assert observed == pytest.approx(-1.0)
+
+
+def test_delta_ci_brackets_its_estimate():
+    from src.metrics import delta_ci
+    est, lo, hi = delta_ci([2, 3, 4, 5], [1, 2, 3], n_resamples=200)
+    # 12 pairs: 2>1, 3>1, 3>2, 4>1, 4>2, 4>3, 5>1, 5>2, 5>3 win; 2=2, 3=3 tie; 2<3 loses -> (9 - 1) / 12
+    assert est == pytest.approx(8 / 12) and lo <= est <= hi
+
+
+def test_cliffs_delta_with_unequal_groups_and_a_fractional_answer():
+    assert cliffs_delta([1, 3], [2]) == pytest.approx(0.0)              # one win, one loss
+    assert cliffs_delta([2, 3, 4], [1, 5]) == pytest.approx(0.0)        # 3 wins, 3 losses over 6 pairs
+    assert cliffs_delta([2, 3, 4], [1, 3]) == pytest.approx(3 / 6)      # wins 2>1, 3>1, 4>1, 4>3; tie 3=3; loss 2<3
+
+
+def test_the_interval_is_the_2_5th_and_97_5th_percentiles():
+    from src.metrics import _interval
+    draws = list(range(1, 201))                                        # 1..200
+    est, lo, hi = _interval(0.0, draws)
+    # linear interpolation: the 2.5th percentile sits 0.025 * 199 = 4.975 steps up from 1, the 97.5th 194.025
+    assert (lo, hi) == (pytest.approx(5.975), pytest.approx(195.025))
+
+
+def test_f1_is_the_harmonic_mean_not_a_difference():
+    p, r, f1 = precision_recall_f1({1, 2}, {1, 2, 3, 4})               # p = 1, r = 0.5
+    assert f1 == pytest.approx(2 * 1 * 0.5 / (1 + 0.5))
+
+
+def test_rank_agreement_needs_two_shared_sentences():
+    assert math.isnan(rank_agreement({"a": 1}, {"a": 2}))
+    assert rank_agreement({"a": 1, "b": 2}, {"a": 1, "b": 2}) == pytest.approx(1.0)
+
+
+def test_jaccard_of_one_empty_set():
+    assert jaccard(set(), {1, 2}) == 0.0 and jaccard({1}, set()) == 0.0
+
+
+def test_paired_rank_biserial():
+    from src.metrics import paired_rank_biserial
+    # differences 1, -2, 3: ranks of |d| are 1, 2, 3; positive ranks 1 + 3, negative 2 -> (4 - 2) / 6
+    assert paired_rank_biserial([2, 0, 4], [1, 2, 1]) == pytest.approx(1 / 3)
+    assert paired_rank_biserial([2, 3], [1, 1]) == 1.0 and paired_rank_biserial([1, 1], [1, 1]) == 0.0
+
+
+def test_median_ci():
+    from src.metrics import median_ci
+    assert median_ci([0.4, 0.4, 0.4], n_resamples=50) == (0.4, 0.4, 0.4)
+    est, lo, hi = median_ci([0.1, 0.5, 0.9], n_resamples=200)
+    assert est == pytest.approx(0.5) and lo <= est <= hi

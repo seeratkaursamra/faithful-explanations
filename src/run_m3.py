@@ -21,14 +21,18 @@ MAIN_OUT = "outputs/records"
 
 
 def counting(fn):
-    """fn, keeping a count of its calls in `.calls`: the run log's measure of how much the model was asked.
-    A list, because appending is safe when several threads call at once."""
-    calls = []
+    """fn, counting its calls in `.calls` and the replies that never parsed in `.failures`: every call,
+    joint, erasure and LIME alike, so the prereg's parse-failure rate covers all of them (Amendment 3).
+    Lists, because appending is safe when several threads call at once."""
+    calls, failures = [], []
 
     def counted(*args, **kwargs):
+        result = fn(*args, **kwargs)
         calls.append(1)
-        return fn(*args, **kwargs)
-    counted.calls = calls
+        if isinstance(result, dict) and result.get("ok") is False:
+            failures.append(1)
+        return result
+    counted.calls, counted.failures = calls, failures
     return counted
 
 
@@ -51,6 +55,13 @@ def confidence(result, label):
         if s["label"] == label:
             return None if s["confidence"] is None else s["confidence"] / 100
     return 0.0
+
+
+def present(result, label):
+    """1 if the reply names the label, 0 if it does not, None if it never parsed: the decision itself."""
+    if not result["ok"]:
+        return None
+    return float(any(s["label"] == label for s in result["symptoms"]))
 
 
 def post_records(post_id, text, gold_labels, prompts, ask_fn, lime_cfg=None):
@@ -86,9 +97,15 @@ def post_records(post_id, text, gold_labels, prompts, ask_fn, lime_cfg=None):
                   "gold": label in gold_labels, "stated_evidence": None, "stated_rationale": None,
                   "attribution": {}, "comprehensiveness": None, "sufficiency": None}
         if s is not None:
-            p_full = None if s["confidence"] is None else s["confidence"] / 100
+            evidence = set(s["evidence"])
+            # the prereg's measure for M3 is a decision flip: does the label disappear without its evidence
+            # (comprehensiveness), and with only its evidence (sufficiency)? Both read the same replies as
+            # the confidence drops, which stay as secondaries
             record["comprehensiveness"], record["sufficiency"] = erasure(
-                sentences, set(s["evidence"]), p_full, lambda kept, label=label: confidence(reply(kept), label))
+                sentences, evidence, 1.0, lambda kept, label=label: present(reply(kept), label))
+            p_full = None if s["confidence"] is None else s["confidence"] / 100
+            record["comprehensiveness_confidence"], record["sufficiency_confidence"] = erasure(
+                sentences, evidence, p_full, lambda kept, label=label: confidence(reply(kept), label))
             record.update(stated_evidence=s["evidence"], stated_rationale=s["rationale"] or None,
                           confidence=p_full)
             if lime_cfg is not None:
@@ -99,9 +116,11 @@ def post_records(post_id, text, gold_labels, prompts, ask_fn, lime_cfg=None):
                     unscored.extend(x for x in scores if x is None)
                     return scores
 
-                weights, record["lime_r2"] = lime_sentences.explain(sentences, predict, **lime_cfg)
-                record["attribution"] = {"LIME": {str(i): w for i, w in weights.items()}}
+                weights, r2 = lime_sentences.explain(sentences, predict, **lime_cfg)
                 record["lime_unscored"] = len(unscored)
+                if weights:                         # an empty fit is no attribution, not an empty one
+                    record["attribution"] = {"LIME": {str(i): w for i, w in weights.items()}}
+                    record["lime_r2"] = None if r2 != r2 else r2      # NaN (one sentence) is written as null
         records.append(record)
     return records, result
 
@@ -179,6 +198,8 @@ def main():
            "failed_posts": failed, "retried": sum(r["attempts"] > 1 for _, r in results),
            # the model runs locally, so its cost is time; cached replies return in milliseconds
            "questions_asked": len(asked.calls), "workers": args.workers, "lime": args.lime,
+           "call_failures": len(asked.failures),
+           "call_failure_rate": len(asked.failures) / len(asked.calls) if asked.calls else 0.0,
            "seconds": round(seconds, 1), "seconds_per_post": round(seconds / len(test), 2)}
     if args.lime:
         lime = [r for records, _ in results for r in records if "lime_unscored" in r]
