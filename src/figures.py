@@ -144,8 +144,13 @@ def _h3_role(symptom):
     return " ref." if symptom == H3_REFERENCE else " *" if symptom in H3_TARGETS else ""
 
 
+def _numbers(triple):
+    """An (estimate, lo, hi) read back from hypotheses.json, where an undefined value is null, as floats."""
+    return tuple(np.nan if v is None else v for v in triple)
+
+
 def _ci_text(triple):
-    return f"{triple[0]:.2f} [{triple[1]:.2f}, {triple[2]:.2f}]"
+    return "{:.2f} [{:.2f}, {:.2f}]".format(*_numbers(triple))
 
 
 def _measured(items, faithfulness="comprehensiveness"):
@@ -156,6 +161,14 @@ def _measured(items, faithfulness="comprehensiveness"):
     return sorted(have["model"].unique())
 
 
+def _faithfulness_unit(values):
+    """M3's comprehensiveness is a 0/1 decision flip, M2's a graded drop in BERT's probability: the same 0-1
+    range, different quantities. Every panel says which one it shows, so the two are not read as one scale."""
+    if len(values.dropna()) and set(values.dropna().unique()) <= {0, 1}:
+        return "share of labels lost when its evidence is removed"
+    return "drop in probability when its evidence is removed"
+
+
 def key_figure(items, hypotheses, path, boot=BOOT):
     """Fig 2, H1: for each model, each measure's mean on correct (filled) and wrong (open) predictions,
     with 95% intervals over posts. H1 predicts the plausibility pair stays together while the
@@ -163,7 +176,8 @@ def key_figure(items, hypotheses, path, boot=BOOT):
     models = _measured(items)
     fig, axes = plt.subplots(1, max(len(models), 1), figsize=(7.0, 2.1), squeeze=False, sharex=True)
     rows = [("plausibility", "Plausibility\nsimilarity to expert rationales"),
-            ("comprehensiveness", "Faithfulness\ndrop when its evidence is removed")]
+            ("comprehensiveness", "Faithfulness\nsee each panel")]
+    lowest = 0.0
     for ax, model in zip(axes[0], models):
         for y, (metric, _) in zip((1, 0), rows):
             ends = {}
@@ -171,6 +185,7 @@ def key_figure(items, hypotheses, path, boot=BOOT):
                 g = items[(items["model"] == model) & (items["correctness"] == kind) & items[metric].notna()]
                 if len(g):
                     mean, lo, hi = bootstrap_ci(g[metric], posts=g["post_id"], **boot)
+                    lowest = min(lowest, lo)
                     ends[kind] = (mean, y + dy)
                     ax.errorbar(mean, y + dy, xerr=[[mean - lo], [hi - mean]], fmt="o", ms=5, mfc=face, mec=INK,
                                 mew=1.0, ecolor=INK, elinewidth=0.8, capsize=0, zorder=3)
@@ -178,14 +193,18 @@ def key_figure(items, hypotheses, path, boot=BOOT):
                 ax.plot(*zip(ends["TP"], ends["FP"]), color=FAINT, linewidth=1.0, zorder=2)
         ax.set_yticks([1, 0], [label for _, label in rows] if ax is axes[0][0] else ["", ""], fontsize=7)
         ax.set_ylim(-0.55, 1.55)
-        ax.set_xlim(0, 1)
+        unit = _faithfulness_unit(items.loc[items["model"] == model, "comprehensiveness"])
+        ax.set_xlabel(f"faithfulness: {unit}", fontsize=6.5, color=MUTED)
         _axes(ax)
         h1 = next((h for h in hypotheses.get("H1", []) if h["model"] == model), {})
         note = f"DiD of Cliff's deltas {_ci_text(h1['did'])}" if "did" in h1 else h1.get("verdict", "").split(":")[0]
         ax.set_title(f"{MODEL_NAMES.get(model, model)}\n{note}", fontsize=7.5, color=INK, loc="left")
+    # BERT's drop goes negative when removing the cited sentences raises its score; show it, do not clip it
+    for ax in axes[0]:
+        ax.set_xlim(min(0.0, lowest - 0.05), 1)
     handles = [Line2D([], [], marker="o", ls="", mfc=INK, mec=INK, ms=5, label="correct (TP)"),
                Line2D([], [], marker="o", ls="", mfc="white", mec=INK, ms=5, label="wrong (FP)")]
-    fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False, fontsize=7, bbox_to_anchor=(0.5, -0.08))
+    fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False, fontsize=7, bbox_to_anchor=(0.5, -0.16))
     return _save(fig, path)
 
 
@@ -201,7 +220,7 @@ def symptom_figure(hypotheses, path):
             if "did" not in r:
                 ax.text(0, y, "no FP", fontsize=6, color=MUTED, va="center", ha="center")
                 continue
-            mean, lo, hi = r["did"]
+            mean, lo, hi = _numbers(r["did"])
             colour, face = (FAINT, "white") if r["low_support"] or r.get("few_fp") else (INK, INK)
             ax.errorbar(mean, y, xerr=[[mean - lo], [hi - mean]], fmt="o", ms=4.5, mfc=face, mec=colour,
                         ecolor=colour, elinewidth=0.8, capsize=0, zorder=3)
@@ -216,12 +235,15 @@ def symptom_figure(hypotheses, path):
 
 
 def accuracy_figure(items, hypotheses, path, faithfulness="comprehensiveness"):
-    """Fig 4, H2: per-symptom F1 against per-symptom faithfulness, one mark per (model, symptom). Models
-    differ by shape, not colour; hollow marks are low-support symptoms, left out of the test."""
+    """Fig 4, H2: per-symptom F1 against per-symptom faithfulness, one mark per symptom, one panel per model:
+    the models' faithfulness numbers are different quantities, and H2 ranks within each model anyway. Hollow
+    marks are low-support symptoms, left out of the test."""
     points = per_symptom(items, faithfulness).dropna(subset=["f1", "faithfulness"])
     h2 = (hypotheses.get("H2") or [{}])[0]
-    fig, ax = plt.subplots(figsize=(3.3, 2.6))
-    for model, g in points.groupby("model"):
+    models = sorted(points["model"].unique())
+    fig, axes = plt.subplots(1, max(len(models), 1), figsize=(7.0, 2.6), squeeze=False, sharex=True)
+    for ax, model in zip(axes[0], models):
+        g = points[points["model"] == model]
         low = g["symptom"].isin(set(g["symptom"]) - set(h2.get("symptoms", g["symptom"])))
         for subset, face in ((g[~low], INK), (g[low], "white")):
             # a white ring under each mark keeps overlapping marks apart
@@ -229,19 +251,20 @@ def accuracy_figure(items, hypotheses, path, faithfulness="comprehensiveness"):
                        facecolors="white", edgecolors="none", zorder=2)
             ax.scatter(subset["f1"], subset["faithfulness"], marker=MARKERS.get(model, "o"), s=28,
                        facecolors=face, edgecolors=INK, linewidths=0.9, zorder=3)
-    _axes(ax, grid="both")
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.set_xlabel("per-symptom F1", fontsize=7)
-    ax.set_ylabel(f"mean {faithfulness}", fontsize=7)
-    title = (f"Spearman of within-model ranks {_ci_text(h2['spearman'])}" if "spearman" in h2
+        _axes(ax, grid="both")
+        ax.set_xlim(-0.03, 1.03)                      # a symptom at F1 0 or 1 shows a whole mark, not half
+        ax.set_ylim(min(0.0, g["faithfulness"].min() - 0.05), 1)
+        ax.set_xlabel("per-symptom F1", fontsize=7)
+        unit = _faithfulness_unit(items.loc[items["model"] == model, faithfulness]) if faithfulness in items else ""
+        ax.set_ylabel(f"mean {faithfulness}\n{unit.replace(' when', chr(10) + 'when')}", fontsize=6.5)
+        ax.set_title(MODEL_NAMES.get(model, model), fontsize=7.5, loc="left")
+    title = (f"H2, Spearman of within-model ranks, pooled: {_ci_text(h2['spearman'])}" if "spearman" in h2
              else h2.get("verdict", "H2 not run"))
-    ax.set_title(title, fontsize=7.5, loc="left")
-    handles = [Line2D([], [], marker=MARKERS.get(m, "o"), ls="", mfc=INK, mec=INK, ms=5, label=MODEL_NAMES.get(m, m))
-               for m in sorted(points["model"].unique())]
-    handles.append(Line2D([], [], marker="o", ls="", mfc="white", mec=INK, ms=5,
-                          label="hollow: fewer than 10\nexamples, not tested"))
-    ax.legend(handles=handles, frameon=False, fontsize=6, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    fig.suptitle(title, fontsize=7.5, x=0.02, ha="left", y=1.04)
+    fig.subplots_adjust(wspace=0.45)                  # room for the second panel's two-line axis label
+    handles = [Line2D([], [], marker="o", ls="", mfc="white", mec=INK, ms=5,
+                      label="hollow: fewer than 10 examples, not tested")]
+    fig.legend(handles=handles, frameon=False, fontsize=6, loc="lower center", bbox_to_anchor=(0.5, -0.1))
     return _save(fig, path)
 
 

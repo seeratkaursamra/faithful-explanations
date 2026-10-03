@@ -27,7 +27,8 @@ logged, not a quiet change.
 Built so far: data layer, sentence segmentation + gold alignment, metrics, BERT baseline, LIME over
 sentences, Integrated Gradients, lexicon markers, Ollama client with embeddings, pipeline figure.
 M1 linear model, the evaluation harness, and every runner that produces the harness's input.
-The data arrived 2026-10-02 (release b81b534); inspect and the SVM have run on it, the models have not.
+The data arrived 2026-10-02 (release b81b534); inspect, the SVM, the BERT baseline (5 seeds), M1 and M3 have run
+on it, and M2 is being re-run with 400-step IG. The evaluation has not run.
 
 ## Code map
 - `src/data.py` - the only place the label scheme and the split live. Everything else imports `load`,
@@ -66,8 +67,8 @@ The data arrived 2026-10-02 (release b81b534); inspect and the SVM have run on i
 - `src/figures.py` - Fig 1 (pipeline) always; Figs 2-5 and Tables 1-3 from a finished harness run.
 - `src/cases.py` - the qualitative cases by a fixed rule; `cases.md` quotes posts and stays in outputs/.
 - `configs/bert_baseline.yaml`, `configs/prompts.yaml`, `configs/evaluate.yaml`, `configs/attribution.yaml` -
-  training recipe, the M3 prompts, the bootstrap settings, and LIME / IG / randomised-head settings
-  (the joint prompt and the decoupled control).
+  training recipe, the prompts (M3's joint prompt and the decoupled control), the bootstrap settings, and
+  LIME / IG / randomised-head settings.
 
 ## Data
 - data/redsm5_posts.csv (post_id, text); data/redsm5_annotations.csv (post_id, sentence_id,
@@ -79,7 +80,8 @@ The data arrived 2026-10-02 (release b81b534); inspect and the SVM have run on i
 - Baseline recipe: bert-base-uncased, max_len 512, batch 8, AdamW 2e-5, 5 epochs, BCE, sigmoid > 0.5.
   Reported 0.51 micro-F1 / 0.36 macro-F1 (single unseeded run); tolerance +/- 0.02 over 5 seeds.
 - `make inspect` must print "matches paper: True" before any modelling. It also checks the test split against
-  the authors' per-label support (from their svm notebook); `make svm` should then give 0.39 / 0.28 exactly. `require_paper_match` in the
+  the authors' per-label support (from their svm notebook). Ours does not match (8 of 10 labels differ; the decision
+  log keeps our split), so `make svm` gives 0.37 / 0.29, not their 0.39 / 0.28. `require_paper_match` in the
   config makes training refuse otherwise (set it false for a sample run); `--allow-mismatch` is for
   inspect, m1, run_m2 and run_m3 on the public sample, and `make inspect-sample` uses it.
 

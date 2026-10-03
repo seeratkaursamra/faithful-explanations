@@ -65,6 +65,10 @@ MAX_PARSE_FAILURE = 0.10         # LLM replies still unparsable after retries
 # less than this, as a median of |Spearman|. The prereg names the check but not a number; see the log.
 RANDOMISED_MAX_AGREEMENT = 0.5
 
+# Low sufficiency means the cited sentences were enough on their own, so these enter H1 negated, and higher
+# is more faithful for every measure H1 sees. The prereg lists sufficiency as a secondary.
+LOWER_IS_FAITHFUL = {"sufficiency", "sufficiency_confidence"}
+
 # An attribution whose scores spread less than this ranks nothing. Real weights are changes in a probability
 # or a logit: one perturbation moving the output by 0.01 already gives weights around 1e-3.
 FLAT = 1e-9
@@ -226,7 +230,8 @@ def h1(items, model, faithfulness="comprehensiveness", boot=BOOT):
     have = m[m["plausibility"].notna() & m[faithfulness].notna()]
     tp, fp = have[have["correctness"] == "TP"], have[have["correctness"] == "FP"]
     # items without both measures (no rationale, nothing cited, a failed erasure) drop out; say how many
-    out = {"model": model, "faithfulness": faithfulness, "primary": model == "M3", "n_tp": len(tp), "n_fp": len(fp),
+    out = {"model": model, "faithfulness": faithfulness, "primary": model == "M3" and faithfulness == "comprehensiveness",
+           "negated": faithfulness in LOWER_IS_FAITHFUL, "n_tp": len(tp), "n_fp": len(fp),
            "left_out": {k: int((m["correctness"] == k).sum()) - len(g) for k, g in (("TP", tp), ("FP", fp))}}
     if len(fp) < MIN_FALSE_POSITIVES or not len(tp):
         out["verdict"] = (f"inconclusive: {len(fp)} false positives with both plausibility and "
@@ -235,10 +240,12 @@ def h1(items, model, faithfulness="comprehensiveness", boot=BOOT):
 
     posts = {"posts_correct": tp["post_id"], "posts_wrong": fp["post_id"], **boot}
     groups = {"posts_a": tp["post_id"], "posts_b": fp["post_id"], **boot}
-    out["did"] = delta_did_ci(tp["plausibility"], tp[faithfulness], fp["plausibility"], fp[faithfulness], **posts)
+    sign = -1 if out["negated"] else 1
+    tp_faith, fp_faith = sign * tp[faithfulness], sign * fp[faithfulness]
+    out["did"] = delta_did_ci(tp["plausibility"], tp_faith, fp["plausibility"], fp_faith, **posts)
     out["plausibility_delta"] = delta_ci(tp["plausibility"], fp["plausibility"], **groups)
-    out["faithfulness_delta"] = delta_ci(tp[faithfulness], fp[faithfulness], **groups)
-    out["did_raw"] = did_ci(tp["plausibility"], tp[faithfulness], fp["plausibility"], fp[faithfulness], **posts)
+    out["faithfulness_delta"] = delta_ci(tp_faith, fp_faith, **groups)
+    out["did_raw"] = did_ci(tp["plausibility"], tp_faith, fp["plausibility"], fp_faith, **posts)
     out["verdict"] = verdict(out["did"], out["plausibility_delta"], out["faithfulness_delta"])
     return out
 
@@ -467,8 +474,8 @@ def study_checks(items, baseline=None, logs=None, boot=BOOT):
 
 # The prereg's secondary outcomes run through H1 in place of comprehensiveness: M3's confidence drop,
 # attribution against the stated evidence by IG and by LIME, and the same at k = 2.
-SECONDARY_FAITHFULNESS = ["comprehensiveness_confidence", "IG_stated_jaccard", "LIME_stated_jaccard",
-                          "IG_stated_jaccard_k2", "LIME_stated_jaccard_k2"]
+SECONDARY_FAITHFULNESS = ["comprehensiveness_confidence", "sufficiency", "sufficiency_confidence",
+                          "IG_stated_jaccard", "LIME_stated_jaccard", "IG_stated_jaccard_k2", "LIME_stated_jaccard_k2"]
 
 # Metrics that mean the same thing whichever model produced them, so two models can be compared on them.
 # Not comprehensiveness or sufficiency: graded probability drops on BERT, near 0/1 flips on the LLM.
@@ -555,6 +562,22 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, m
     return items, summarise(items, boot), hypotheses
 
 
+def jsonable(x):
+    """The results as plain JSON: numpy numbers as Python ones, NaN and infinity as null. json.dumps would
+    write a bare NaN, which is not JSON, and stricter readers refuse the whole file."""
+    if isinstance(x, dict):
+        return {str(k): jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple, np.ndarray)):
+        return [jsonable(v) for v in x]
+    if isinstance(x, (bool, np.bool_)):
+        return bool(x)
+    if isinstance(x, (int, np.integer)):
+        return int(x)
+    if isinstance(x, (float, np.floating)):
+        return float(x) if np.isfinite(x) else None
+    return x
+
+
 def stale_m2(m2_log, ig_steps):
     """A warning when M2's records were made with a different number of IG steps than the config now
     sets (or by a run that did not record it), so stale attributions are not evaluated unnoticed. Also
@@ -614,7 +637,7 @@ def main():
     items.to_csv(out / "items.csv", index=False)
     summary.to_csv(out / "summary.csv", index=False)
     hypotheses["embed_model"] = args.embed_model
-    (out / "hypotheses.json").write_text(json.dumps(hypotheses, indent=2, default=float))
+    (out / "hypotheses.json").write_text(json.dumps(jsonable(hypotheses), indent=2, allow_nan=False))
     study = hypotheses["study"]
     print(f"study: {study['status']}")
     for c in study["checks"]:

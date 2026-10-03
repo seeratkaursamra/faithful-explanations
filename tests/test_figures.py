@@ -42,7 +42,7 @@ def test_latex_escapes_underscores_and_percent():
 
 
 def test_every_figure_and_table_is_written_from_a_harness_run(tmp_path):
-    from src.evaluate import h1, h2, h3, h4, summarise
+    from src.evaluate import h1, h2, h3, h4, jsonable, summarise
     boot = {"n_resamples": 50, "seed": 0}
     df = items()
     df["ig_lime_spearman"] = np.linspace(-0.2, 0.9, len(df))
@@ -50,7 +50,10 @@ def test_every_figure_and_table_is_written_from_a_harness_run(tmp_path):
                   "H4": [h4(df, {}, boot)]}
     df.to_csv(tmp_path / "items.csv", index=False)
     summarise(df, boot).to_csv(tmp_path / "summary.csv", index=False)
-    (tmp_path / "hypotheses.json").write_text(json.dumps(hypotheses, default=float))
+    # an undefined statistic, written the way the harness writes it (null), must not break the figures
+    hypotheses["H2"][0]["spearman"] = (np.nan, np.nan, np.nan)
+    hypotheses["H3"][0]["by_symptom"][0]["did"] = (np.nan, np.nan, np.nan)
+    (tmp_path / "hypotheses.json").write_text(json.dumps(jsonable(hypotheses), allow_nan=False))
     written = results(tmp_path, tmp_path / "out", boot)
     for name in ["fig2_key", "fig3_symptoms", "fig4_accuracy", "fig5_sanity"]:
         assert (tmp_path / "out" / f"{name}.pdf").stat().st_size > 0
@@ -67,3 +70,9 @@ def test_table3_keeps_only_annotated_cases_and_never_any_text_column():
     table = cases_table(cases)
     assert list(table.columns) == TABLE3_COLUMNS
     assert len(table) == 1 and table.iloc[0]["symptom"] == "Sleep issues"
+
+
+def test_each_panel_says_which_faithfulness_it_shows():
+    from src.figures import _faithfulness_unit
+    assert _faithfulness_unit(pd.Series([0.0, 1.0, 1.0, np.nan])).startswith("share of labels lost")    # M3's flip
+    assert _faithfulness_unit(pd.Series([0.3, -0.1, 1.0])).startswith("drop in probability")          # M2's drop

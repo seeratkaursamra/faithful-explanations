@@ -46,3 +46,13 @@ def test_low_faithfulness_is_judged_within_each_model():
     cases = pick(both, per_model=2)
     assert list(cases["model"]) == ["M2", "M2", "M3", "M3"]
     assert set(cases[cases["model"] == "M2"]["post_id"]) == {"m0", "m1"}     # M2's own least faithful
+
+
+def test_on_a_flip_low_means_the_label_survived():
+    # one item in ten did not flip: the 25th percentile of the 0/1 values is 1, so a percentile cut would take
+    # every item and return the most plausible faithful ones as cases
+    m3 = scored("M3", [("kept", "FP", 0.6, 0.0)] + [(f"flip{i}", "FP", 0.9, 1.0) for i in range(9)])
+    assert list(pick(m3, per_model=3)["post_id"]) == ["kept"]
+    # a graded measure still uses the percentile
+    m2 = scored("M2", [(f"g{i}", "FP", 0.9, 0.1 * i) for i in range(8)])
+    assert list(pick(m2, per_model=8)["post_id"]) == ["g0", "g1"]

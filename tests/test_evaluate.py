@@ -1,3 +1,4 @@
+import json
 import math
 
 import numpy as np
@@ -617,6 +618,18 @@ def test_h1_says_how_many_items_it_left_out():
     assert out["left_out"] == {"TP": 0, "FP": 5} and out["n_fp"] == 30 and out["primary"] is True
 
 
+def test_h1_on_sufficiency_counts_low_as_faithful_and_secondaries_are_never_primary():
+    # wrong predictions need more than the sentences they cite (sufficiency high): faithfulness falls on FPs
+    rng = np.random.default_rng(0)
+    tp = items_frame(40, 0, 0, 0).assign(plausibility=0.8 + rng.normal(0, 0.01, 40), sufficiency=0.1 + rng.normal(0, 0.05, 40))
+    fp = items_frame(0, 40, 0, 0).assign(plausibility=0.8 + rng.normal(0, 0.01, 40), sufficiency=0.6 + rng.normal(0, 0.05, 40))
+    out = h1(pd.concat([tp, fp]), "M3", faithfulness="sufficiency", boot={"n_resamples": 50, "seed": 0})
+    assert out["negated"] and out["faithfulness_delta"][0] > 0.9 and out["did"][0] > 0.7
+    assert out["verdict"] == "supported" and out["primary"] is False
+    both = pd.concat([tp, fp]).assign(comprehensiveness_confidence=0.5)
+    assert h1(both, "M3", faithfulness="comprehensiveness_confidence", boot={"n_resamples": 50, "seed": 0})["primary"] is False
+
+
 
 def test_run_compares_rejection_notes_on_false_positives_only():
     posts = pd.DataFrame({"post_id": ["p1", "p2", "tr"], "text": [TEXT, "I cannot sleep.", "I never sleep."]})
@@ -677,3 +690,10 @@ def test_stale_m2_records_are_flagged():
     assert "ig_steps=50" in stale_m2({"ig_steps": 50}, 400)
     assert stale_m2({"ig_steps": 400}, 400) is None
     assert "run `make m2` first" in stale_m2(None, 400)                         # no run at all
+
+
+def test_results_are_written_as_valid_json():
+    from src.evaluate import jsonable
+    out = jsonable({"did": (np.float64(0.2), np.nan, np.inf), "n": np.int64(3), "ok": np.bool_(True), 1: [np.float32(0.5)]})
+    assert out == {"did": [0.2, None, None], "n": 3, "ok": True, "1": [0.5]}
+    json.dumps(out, allow_nan=False)                                 # raises on any NaN left behind

@@ -8,10 +8,11 @@ Reddit posts labelled at the sentence level for the nine DSM-5 symptoms of a maj
 each label with a psychologist's written rationale. It picks up a question STEP-EZ (Farruque et al.,
 2021) left open: its explanation score could not tell a meaningful explanation from a short one.
 
-**Status:** everything is built and tested (201 tests). The data arrived on 2026-10-02: it passes the
-checks against the paper, and the authors' SVM runs on it; the models have not been run yet. The analysis
-is pre-registered in `docs/prereg.md`, with three dated amendments, all made before any explanation,
-attribution or LLM output on the real data existed (each says exactly what did exist).
+**Status:** everything is built and tested (231 tests). The data arrived on 2026-10-02: it passes the
+checks against the paper, and the BERT baseline, the authors' SVM, M1 and M3 have run on it; M2 and the
+evaluation are next. The analysis is pre-registered in `docs/prereg.md`, with three dated amendments, all
+made before any explanation, attribution or LLM output on the real data existed (each says exactly what
+did exist).
 
 ## The idea
 
@@ -265,7 +266,7 @@ src/
   cases.py           the qualitative cases, by a fixed rule
   figures.py         figures and tables
 configs/             training recipe, prompts, bootstrap and attribution settings
-docs/prereg.md       the pre-registration, with two dated amendments, both made before any data
+docs/prereg.md       the pre-registration and its three dated amendments
 docs/decision_log.md every design decision, the alternatives, and why
 docs/observations.md notes from reading posts by hand
 tests/               one test file per module; synthetic inputs or the public sample, no network or GPU

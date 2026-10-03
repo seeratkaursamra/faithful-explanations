@@ -18,6 +18,15 @@ from .sentences import texts
 LOW_FAITHFULNESS = 0.25
 
 
+def low_faithfulness(values):
+    """At or below the model's own 25th percentile. A 0/1 measure (M3's decision flip) has no quarter to speak
+    of: with fewer than a quarter zeros its percentile is 1 and every item would count as low, faithful ones
+    included. There low is 0, the label surviving the removal of everything the model cited."""
+    if set(values.unique()) <= {0, 1}:
+        return values == 0
+    return values <= values.quantile(LOW_FAITHFULNESS)
+
+
 def pick(items, per_model=10, faithfulness="comprehensiveness"):
     """For each model with both measures: its low-faithfulness predictions, the most plausible first.
     Ties break by post and symptom, so the same run always gives the same cases."""
@@ -26,7 +35,7 @@ def pick(items, per_model=10, faithfulness="comprehensiveness"):
         items.columns) else have.iloc[:0]
     chosen = []
     for _, m in have.groupby("model"):
-        low = m[m[faithfulness] <= m[faithfulness].quantile(LOW_FAITHFULNESS)]
+        low = m[low_faithfulness(m[faithfulness])]
         chosen.append(low.sort_values(["plausibility", faithfulness, "post_id", "symptom"],
                                       ascending=[False, True, True, True]).head(per_model))
     columns = ["model", "post_id", "symptom", "correctness", "plausibility", faithfulness]
