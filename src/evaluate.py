@@ -65,6 +65,10 @@ MAX_PARSE_FAILURE = 0.10         # LLM replies still unparsable after retries
 # less than this, as a median of |Spearman|. The prereg names the check but not a number; see the log.
 RANDOMISED_MAX_AGREEMENT = 0.5
 
+# An attribution whose scores spread less than this ranks nothing. Real weights are changes in a probability
+# or a logit: one perturbation moving the output by 0.01 already gives weights around 1e-3.
+FLAT = 1e-9
+
 # Bootstrap settings; the real values come from configs/evaluate.yaml, these match it.
 BOOT = {"n_resamples": 1000, "seed": 0}
 
@@ -141,6 +145,15 @@ def score(record, g_evid, g_text, vectors, refs, sentences=None, negative_words=
     # an attribution over fewer than two sentences ranks nothing: an empty or failed fit, or a
     # one-sentence post whose single sentence would match any citation trivially
     attributions = {m: s for m, s in attributions.items() if len(s) >= 2}
+    # nor does a flat one, Amendment 3's failed fit: when the output never moved (an LLM's confidence pinned at
+    # 100 under every perturbation) LIME's weights all come out 0, its top-k would be the first k sentences by
+    # id, and its R-squared describes a fit to a constant. Counted as a share, TP against FP, like no_citation
+    for method, scores in list(attributions.items()):
+        row[f"{method}_flat"] = float(max(scores.values()) - min(scores.values()) < FLAT)
+        if row[f"{method}_flat"]:
+            del attributions[method]
+            if method == "LIME":
+                row.pop("lime_r2", None)
     for method, scores in attributions.items():
         if s_evid:
             row[f"{method}_stated_jaccard"] = jaccard(top_k(scores, len(s_evid)), s_evid)
@@ -544,9 +557,10 @@ def run(records, posts, ann, train_ids, embed, boot=BOOT, negative_words=None, m
 
 def stale_m2(m2_log, ig_steps):
     """A warning when M2's records were made with a different number of IG steps than the config now
-    sets (or by a run that did not record it), so stale attributions are not evaluated unnoticed."""
+    sets (or by a run that did not record it), so stale attributions are not evaluated unnoticed. Also
+    when there is no M2 log at all: `make evaluate` passes a glob, which drops a missing m2.jsonl silently."""
     if m2_log is None:
-        return None
+        return "warning: no M2 run log in the logs folder; run `make m2` first, or M2 is left out of this evaluation"
     if m2_log.get("ig_steps") != ig_steps:
         return (f"warning: M2's records were made with ig_steps={m2_log.get('ig_steps')}, but "
                 f"configs/attribution.yaml says {ig_steps}; re-run `make m2` before trusting M2's attributions")

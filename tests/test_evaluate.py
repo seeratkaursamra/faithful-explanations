@@ -92,6 +92,20 @@ def test_ig_and_lime_agreement_needs_both():
     assert "ig_lime_jaccard" not in score(record(attribution={"IG": both["IG"]}), {0}, "", {}, {})
 
 
+def test_a_flat_attribution_ranks_nothing():
+    # an LLM pinned at 100 under every perturbation: LIME's weights all 0 (or off by rounding), its R-squared a
+    # fit to a constant. Without the rule, top-2 would be sentences {0, 1} by id and score as overlap
+    flat = {"IG": {"0": 0.9, "1": 0.1, "2": 0.5}, "LIME": {"0": 0.0, "1": 1e-17, "2": 0.0}}
+    row = score(record(attribution=flat, lime_r2=1.0), {0}, "", {}, {})
+    assert row["LIME_flat"] == 1.0 and row["IG_flat"] == 0.0
+    assert not any(k.startswith("LIME_") and k != "LIME_flat" for k in row)
+    assert "lime_r2" not in row and "ig_lime_spearman" not in row
+    assert row["IG_stated_jaccard"] == 1.0                           # IG still counts: top-2 {0, 2} = cited
+    # a small but real spread is not flat
+    moved = score(record(attribution={"LIME": {"0": 0.0, "1": 1e-3, "2": 0.0}}, lime_r2=0.4), {0}, "", {}, {})
+    assert moved["LIME_flat"] == 0.0 and moved["lime_r2"] == 0.4 and "LIME_stated_jaccard" in moved
+
+
 # --- aggregation ---------------------------------------------------------------------------------------
 
 def items_frame(n_tp, n_fp, tp_value, fp_value, symptom="SLEEP_ISSUES", model="M3", n_fn=0):
@@ -661,4 +675,5 @@ def test_stale_m2_records_are_flagged():
     from src.evaluate import stale_m2
     assert "re-run `make m2`" in stale_m2({"posts": 297}, 400)                  # a run that never recorded its steps
     assert "ig_steps=50" in stale_m2({"ig_steps": 50}, 400)
-    assert stale_m2({"ig_steps": 400}, 400) is None and stale_m2(None, 400) is None
+    assert stale_m2({"ig_steps": 400}, 400) is None
+    assert "run `make m2` first" in stale_m2(None, 400)                         # no run at all
