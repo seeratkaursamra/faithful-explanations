@@ -240,8 +240,18 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     (out / "m2.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
     deltas = [abs(r["ig_delta"]) for r in records if "ig_delta" in r]
+    good = [d for d in deltas if np.isfinite(d)]
+    # the GPU short of memory returned wrong numbers without an error once (decision log), so every prediction the
+    # run made is checked against training's, not only the first pass
+    drift = None
+    if scored.exists():
+        drift = max((abs(r["confidence"] - saved.loc[r["post_id"], r["symptom"]]) for r in records), default=0.0)
+        if drift > 1e-3 or len(good) < len(deltas):
+            print(f"warning: predictions drifted from {scored} by up to {drift:.4f} and {len(deltas) - len(good)} IG gaps are "
+                  f"not finite; the GPU was probably short of memory, do not use these records")
     log = {"posts": len(test), "decoupled_asked": asked, "decoupled_failures": len(failed), "failed_posts": failed,
-           "ig_delta_max": max(deltas, default=None), "ig_delta_median": float(np.median(deltas)) if deltas else None,
+           "ig_delta_max": max(good, default=None), "ig_delta_median": float(np.median(good)) if good else None,
+           "ig_delta_nonfinite": len(deltas) - len(good), "prediction_drift_max": drift,
            "checkpoint": args.checkpoint, "checkpoint_check_max_diff": checkpoint_diff, "max_len": max_len,
            "ig_steps": cfg["ig"]["steps"],
            "threshold": threshold, "device": str(device), "sanity": args.sanity,
