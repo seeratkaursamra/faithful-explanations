@@ -1,6 +1,7 @@
 """Figures and tables for the writeup. Run with: python -m src.figures"""
 import argparse
 import json
+import textwrap
 from pathlib import Path
 
 import matplotlib
@@ -213,23 +214,28 @@ def symptom_figure(hypotheses, path):
     grey marks are under the support rule or rest on fewer than 5 false positives: shown, not argued from."""
     results = hypotheses.get("H3", [])
     # one x scale for every panel, or a small effect in one model looks as big as a large one in another
-    fig, axes = plt.subplots(1, max(len(results), 1), figsize=(7.0, 2.6), squeeze=False, sharey=True, sharex=True)
+    fig, axes = plt.subplots(1, max(len(results), 1), figsize=(7.0, 2.8), squeeze=False, sharey=True, sharex=True)
     for ax, h3 in zip(axes[0], results):
         rows = h3["by_symptom"]
         for y, r in enumerate(reversed(rows)):
+            # the row labels are shared, so each panel writes its own false-positive count: support is the same
+            # for every model (the gold positives), false positives are not
+            ax.text(0.99, y, f"{r['n_fp']} FP", transform=ax.get_yaxis_transform(), fontsize=6, color=MUTED,
+                    va="center", ha="right")
             if "did" not in r:
-                ax.text(0, y, "no FP", fontsize=6, color=MUTED, va="center", ha="center")
+                ax.text(0, y, "no FP" if not r["n_fp"] else "not tested", fontsize=6, color=MUTED, va="center", ha="center")
                 continue
             mean, lo, hi = _numbers(r["did"])
             colour, face = (FAINT, "white") if r["low_support"] or r.get("few_fp") else (INK, INK)
             ax.errorbar(mean, y, xerr=[[mean - lo], [hi - mean]], fmt="o", ms=4.5, mfc=face, mec=colour,
                         ecolor=colour, elinewidth=0.8, capsize=0, zorder=3)
         ax.axvline(0, color=INK, linewidth=0.6, zorder=1)
-        ax.set_yticks(range(len(rows)), [f"{_nice(r['symptom'])} ({r['support']}, {r['n_fp']} FP){_h3_role(r['symptom'])}"
+        ax.set_yticks(range(len(rows)), [f"{_nice(r['symptom'])} ({r['support']}){_h3_role(r['symptom'])}"
                                          for r in reversed(rows)], fontsize=7)
+        ax.set_xlim(-1.15, 2.75)                     # room on the right for the counts
         _axes(ax)
-        ax.set_title(f"{MODEL_NAMES.get(h3['model'], h3['model'])}\n{_readable(h3['verdict'])}", fontsize=7.5,
-                     loc="left")
+        verdict = "\n".join(textwrap.wrap(_readable(h3["verdict"]), 46))
+        ax.set_title(f"{MODEL_NAMES.get(h3['model'], h3['model'])}\n{verdict}", fontsize=7.5, loc="left")
         ax.set_xlabel("Cliff's delta, faithfulness minus plausibility", fontsize=7, color=INK)
     return _save(fig, path)
 
