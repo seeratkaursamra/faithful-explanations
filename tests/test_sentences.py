@@ -111,3 +111,10 @@ def test_word_overlap_exactly_at_the_threshold_counts():
     # {a, b, c, x} vs {a, b, y, z}: 2 of 6, under the threshold
     text = "a b y z."
     assert align("a b c x", text, split(text), threshold=0.5) == (-1, "none")
+
+
+def test_an_overlap_exactly_at_the_threshold_still_beats_a_containment():
+    # sentence 1 shares exactly half the words (2 of 4) with the gold; sentence 0 contains the gold but shares only
+    # 3 of 11. At the threshold counts as clearing it, as in the final overlap test, so the better overlap wins
+    text = "Most nights I lie awake until the birds start singing outside. I lie still."
+    assert align("I lie awake", text, split(text)) == (1, "overlap")

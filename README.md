@@ -185,22 +185,25 @@ long starts.
 
 | # | Command | Time on the M4 | What to check |
 |---|---|---|---|
-| 1 | `make inspect` | seconds | `matches paper: True`, `test split matches the authors': True`, and a high gold-alignment rate |
-| 2 | `make svm` | seconds | `matches paper: True` and the split matching again. The SVM is deterministic, so on the authors' split it should give 0.39 / 0.28 at their two decimals |
-| 3 | `make baseline5` | ~1.4 h | `within tolerance: True`: the five-seed mean micro-F1 within 0.51 ± 0.02 |
+| 1 | `make inspect` | seconds | `matches paper: True` and a high gold-alignment rate. `test split matches the authors'` prints False on this release; the decision log keeps our split |
+| 2 | `make svm` | seconds | the SVM is deterministic: 0.39 / 0.28 on the authors' split, 0.37 / 0.29 on ours |
+| 3 | `make baseline5` | ~1.4 h | `within tolerance`: the five-seed mean micro-F1 against 0.51 ± 0.02 |
 | 4 | `make m1` | minutes | M1's micro-F1 and its records |
 | 5 | `make m2` | ~2-3 h | `decoupled failures` low; IG's completeness gap small |
-| 6 | `make m3` | ~2-2.5 h | `parse failures` under 10% |
-| 7 | `make m3-lime` | overnight, 15-20 h | rewrites `m3.jsonl` with LIME added; time a `--limit 10` run first |
-| 8 | `make evaluate` | minutes | the study status, then the H1-H4 verdicts |
-| 9 | `make evaluate-minilm` | minutes | whether the verdicts hold with the second embedding model |
-| 10 | `make figures` | ~10 s | Figures 1-5 and Tables 1-2 in `figures/` |
-| 11 | `make cases` | seconds | the qualitative cases to read by hand |
+| 6 | `make m3` | ~1.5-2.5 h | `parse failures` under 10% |
+| 7 | the seed check (below) | ~1-2 h | how far IG and LIME on BERT seed 1 agree with seed 0 |
+| 8 | M3 stability (below) | ~1.5 h | how far M3's labels and cited sentences agree across three re-asks |
+| 9 | `make m3-lime` | overnight, 15-20 h | rewrites `m3.jsonl` with LIME added |
+| 10 | `make evaluate` | minutes | the study status, then the H1-H4 verdicts |
+| 11 | `make evaluate-minilm` | minutes | whether the verdicts hold with the second embedding model |
+| 12 | `make figures` | ~10 s | Figures 1-5 and Tables 1-2 in `figures/` |
+| 13 | `make cases` | seconds | the qualitative cases to read by hand |
 
-If step 1 or 2 fails, stop there: the data or the split is not the authors', and every number after
-would be about a different test set.
+If step 1 prints `matches paper: False`, stop there: the data is not the paper's, and every number after
+would be about a different dataset.
 
-Three secondary runs, each written outside `outputs/records/` so the harness never reads them twice:
+Steps 7 and 8 are secondary and decide nothing; each writes outside `outputs/records/` so the harness never
+reads it. Steps 7, 8 and 9 all ask Qwen, so run them one at a time:
 
 ```bash
 # the seed check: attributions on BERT seed 1 against seed 0

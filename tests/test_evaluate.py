@@ -377,6 +377,11 @@ def test_h2_leaves_out_low_support_symptoms_and_needs_three_points():
     items = pd.concat([h2_items(True), symptom_items("M2", "PSYCHOMOTOR", tp=2, fp=1, fn=1, faith=0.9)])
     assert "PSYCHOMOTOR" not in h2(items, boot={"n_resamples": 50, "seed": 0})["symptoms"]
     assert h2(symptom_items("M2", "FATIGUE", 8, 2, 4, 0.3))["verdict"].startswith("inconclusive")
+    # two points always correlate perfectly: still too few. Three are enough to compute
+    two = pd.concat([symptom_items("M2", s, tp=6 + 2 * k, fp=3, fn=6 - k, faith=0.2 + 0.1 * k)
+                     for k, s in enumerate(SYMPTOM_SET[:3])], ignore_index=True)
+    assert "need 3" in h2(two[two["symptom"] != SYMPTOM_SET[2]], boot={"n_resamples": 50, "seed": 0})["verdict"]
+    assert "need 3" not in h2(two, boot={"n_resamples": 50, "seed": 0})["verdict"]
 
 
 def m1_items(density):
