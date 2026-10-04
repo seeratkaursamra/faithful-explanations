@@ -13,6 +13,19 @@ URL = "http://localhost:11434/api/generate"
 EMBED_URL = "http://localhost:11434/api/embed"
 VALID_LABELS = set(SYMPTOMS) | {NO_SYMPTOMS}
 
+# Ollama's default window was 2,048 tokens per request, and it cuts a longer prompt from the front without an
+# error, system prompt first. The window has to hold the prompt and the whole reply, or a long reply pushes the
+# prompt out as it is written: 32,768 (Qwen 2.5's own limit) holds the longest test post (10,746 tokens) plus a reply
+# at the cap below. It stays out of the cache key: a prompt that fits gets the same reply in any window (checked),
+# so only the replies that did not fit had to be asked again. See the decision log.
+NUM_CTX = 32768
+
+# A reply can loop: in JSON mode Qwen sometimes repeats a few characters until something stops it, which a big
+# window lets run for many minutes. The longest real reply is 3,638 tokens (721 cited sentence numbers), so this cap
+# leaves room for real replies, and a looping one comes back as broken JSON, which ask() retries like any other.
+# Out of the cache key for the same reason as the window.
+NUM_PREDICT = 8192
+
 
 def unwrap(text):
     """Pull the JSON object out of a reply, even if the model wrapped it in prose or a code fence."""
@@ -75,7 +88,7 @@ def parse(text, n_sentences=None, expected=None):
 
 
 def generate(prompt, system, model="qwen2.5:7b", seed=0, temperature=0,
-             cache_dir="outputs/llm_cache", timeout=300, transport_attempts=3):
+             cache_dir="outputs/llm_cache", timeout=1800, transport_attempts=3):
     """One call to Ollama, cached on disk so an interrupted run resumes instead of starting over.
 
     Only connection and timeout errors are retried here. A reply that arrives but is malformed is
@@ -87,9 +100,10 @@ def generate(prompt, system, model="qwen2.5:7b", seed=0, temperature=0,
     if cached and cached.exists():
         return cached.read_text()
 
+    sent = {**body, "options": {**body["options"], "num_ctx": NUM_CTX, "num_predict": NUM_PREDICT}}
     for attempt in range(transport_attempts):
         try:
-            request = urllib.request.Request(URL, data=json.dumps(body).encode(),
+            request = urllib.request.Request(URL, data=json.dumps(sent).encode(),
                                              headers={"Content-Type": "application/json"})
             reply = json.loads(urllib.request.urlopen(request, timeout=timeout).read())["response"]
             if cached:

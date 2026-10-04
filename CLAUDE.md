@@ -45,7 +45,8 @@ on it, and M2 is being re-run with 400-step IG. The evaluation has not run.
   local weighted R-squared alongside the weights; report it.
 - `src/llm.py` - Ollama client. `parse` validates every reply (taxonomy, evidence indices in range,
   no duplicate or contradictory labels); `ask` retries a malformed reply with the reason appended and
-  the temperature raised. Calls are cached on disk under `outputs/llm_cache`.
+  the temperature raised. Calls are cached on disk under `outputs/llm_cache`. Every request asks for a
+  16,384-token window (`NUM_CTX`): Ollama's default cut long posts from the front without an error.
 - `src/attribution.py` - Integrated Gradients by hand over the word embeddings, [CLS]/[SEP] kept in the
   baseline, completeness gap returned; `explain` goes straight to sentence scores. Matched to Captum.
 - `src/lexicon.py` - first person, negative affect (NRC fear+anger+sadness, file licensed and gitignored),

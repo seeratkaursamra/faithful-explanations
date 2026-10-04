@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from src.llm import ask, embed, parse, repair, unwrap
 
 GOOD = json.dumps({"symptoms": [
@@ -183,3 +185,43 @@ def test_parse_bounds():
     assert parse(cite(7), n_sentences=7)[0] is None and parse(cite(-1), n_sentences=7)[0] is None
     # NO_SYMPTOMS on its own is a valid answer; with one other label it is a contradiction
     assert parse(json.dumps({"symptoms": [{"label": "NO_SYMPTOMS"}]}))[1] == "ok"
+
+
+def test_generate_stops_the_run_when_ollama_cannot_be_reached(monkeypatch):
+    # a dead server must raise after its retries, not come back as None and be counted as a reply that failed
+    # to parse. No network: urlopen is replaced, and so is the back-off sleep
+    import urllib.error
+    from src import llm
+    tries = []
+
+    def refuse(*args, **kwargs):
+        tries.append(1)
+        raise urllib.error.URLError("connection refused")
+    monkeypatch.setattr(llm.urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(llm.time, "sleep", lambda seconds: None)
+    with pytest.raises(urllib.error.URLError):
+        llm.generate("a prompt", "a system", cache_dir=None, transport_attempts=3)
+    assert len(tries) == 3
+
+
+def test_generate_sends_a_window_for_the_longest_post_but_keys_the_cache_on_the_question(monkeypatch, tmp_path):
+    from src import llm
+    sent = []
+
+    class Reply:
+        def read(self):
+            return json.dumps({"response": '{"symptoms": []}'}).encode()
+
+    def answer(request, timeout):
+        sent.append(json.loads(request.data))
+        return Reply()
+    monkeypatch.setattr(llm.urllib.request, "urlopen", answer)
+    llm.generate("a prompt", "a system", cache_dir=tmp_path)
+    # a looping reply is stopped well above the longest real one (3,638 tokens), and the window holds the
+    # longest test post (10,746 tokens) plus a reply at that cap, so a long reply cannot push the prompt out
+    assert sent[0]["options"]["num_predict"] == llm.NUM_PREDICT >= 2 * 3638
+    assert sent[0]["options"]["num_ctx"] == llm.NUM_CTX >= 10746 + llm.NUM_PREDICT
+    # the key is the question without the window, so replies cached before the window was set are still found
+    question = {"model": "qwen2.5:7b", "system": "a system", "prompt": "a prompt", "stream": False, "format": "json",
+                "options": {"temperature": 0, "seed": 0}}
+    assert llm._cache_path(tmp_path, question).exists()
