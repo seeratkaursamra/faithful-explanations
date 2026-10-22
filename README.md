@@ -8,9 +8,9 @@ Reddit posts labelled at the sentence level for the nine DSM-5 symptoms of a maj
 each label with a psychologist's written rationale. It picks up a question STEP-EZ (Farruque et al.,
 2021) left open: its explanation score could not tell a meaningful explanation from a short one.
 
-**Status:** everything is built and tested (231 tests). The data arrived on 2026-10-02: it passes the
-checks against the paper, and the BERT baseline, the authors' SVM, M1 and M3 have run on it; M2 and the
-evaluation are next. The analysis is pre-registered in `docs/prereg.md`, with three dated amendments, all
+**Status:** every run and the evaluation are done (234 tests). The data arrived on 2026-10-02 and passes the
+checks against the paper. Under its own pre-registered rules the study is inconclusive: the BERT baseline came
+out above its band, and IG did not degrade on a randomised head. The analysis is pre-registered in `docs/prereg.md`, with three dated amendments, all
 made before any explanation, attribution or LLM output on the real data existed (each says exactly what
 did exist).
 

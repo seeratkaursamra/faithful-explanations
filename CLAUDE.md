@@ -28,7 +28,8 @@ Built so far: data layer, sentence segmentation + gold alignment, metrics, BERT 
 sentences, Integrated Gradients, lexicon markers, Ollama client with embeddings, pipeline figure.
 M1 linear model, the evaluation harness, and every runner that produces the harness's input.
 The data arrived 2026-10-02 (release b81b534); inspect, the SVM, the BERT baseline (5 seeds), M1 and M3 have run
-on it, and M2 is being re-run with 400-step IG. The evaluation has not run.
+on it, then M2, M3 with LIME, the stability runs, the seed check and the evaluation. Status: inconclusive under the
+prereg (the baseline and the randomised-head check); see docs/decision_log.md.
 
 ## Code map
 - `src/data.py` - the only place the label scheme and the split live. Everything else imports `load`,
@@ -46,7 +47,8 @@ on it, and M2 is being re-run with 400-step IG. The evaluation has not run.
 - `src/llm.py` - Ollama client. `parse` validates every reply (taxonomy, evidence indices in range,
   no duplicate or contradictory labels); `ask` retries a malformed reply with the reason appended and
   the temperature raised. Calls are cached on disk under `outputs/llm_cache`. Every request asks for a
-  16,384-token window (`NUM_CTX`): Ollama's default cut long posts from the front without an error.
+  32,768-token window (`NUM_CTX`) and caps replies at 8,192 tokens (`NUM_PREDICT`): Ollama's default cut long
+  posts from the front without an error, and a reply can loop.
 - `src/attribution.py` - Integrated Gradients by hand over the word embeddings, [CLS]/[SEP] kept in the
   baseline, completeness gap returned; `explain` goes straight to sentence scores. Matched to Captum.
 - `src/lexicon.py` - first person, negative affect (NRC fear+anger+sadness, file licensed and gitignored),
